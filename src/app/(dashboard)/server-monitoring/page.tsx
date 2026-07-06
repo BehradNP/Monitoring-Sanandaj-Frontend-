@@ -1,78 +1,65 @@
 "use client";
 
-import { useState } from "react";
-import ServersTable from "@/components/dashboard/ServersTable";
+import { useCallback, useEffect, useState } from "react";
+import ServersTable, { type Server } from "@/components/dashboard/ServersTable";
 import ServersDashboard from "@/components/dashboard/ServersDashboard";
 import EditServerModal from "@/components/dashboard/EditServerModal";
+import cupServerService from "@/services/cup-server-service";
+import type { CupServerInfoItem } from "@/types/cup-server";
 
-type Server = {
-  id: number;
-  title: string;
-  ip: string;
-  username: string;
-  order: number;
-  interval: number;
-  status: "online" | "offline";
-  cpu: number;
-  ram: number;
-  disk: number;
+const mapCupServerToServer = (item: CupServerInfoItem, index: number): Server => {
+  return {
+    id: item.id,
+    title: item.title,
+    name: item.title,
+    ip: item.ip,
+    username: "-",
+    order: index + 1,
+    interval: item.timeSc,
+    status: item.isOnline ? "online" : "offline",
+    cpu: item.avgCup,
+    ram: item.avgCRam,
+    disk: item.avgHDD,
+  };
 };
 
 export default function ServerMonitoringPage() {
   const [tab, setTab] = useState<"dashboard" | "list">("dashboard");
+  const [servers, setServers] = useState<Server[]>([]);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const servers: Server[] = [
-    {
-      id: 1,
-      title: "Server-1",
-      ip: "192.168.1.10",
-      username: "root",
-      order: 1,
-      interval: 30,
-      status: "online",
-      cpu: 35,
-      ram: 40,
-      disk: 60,
-    },
-    {
-      id: 2,
-      title: "Server-2",
-      ip: "192.168.1.11",
-      username: "root",
-      order: 2,
-      interval: 30,
-      status: "online",
-      cpu: 75,
-      ram: 68,
-      disk: 52,
-    },
-    {
-      id: 3,
-      title: "Server-3",
-      ip: "192.168.1.12",
-      username: "admin",
-      order: 3,
-      interval: 60,
-      status: "offline",
-      cpu: 0,
-      ram: 0,
-      disk: 10,
-    },
-    {
-      id: 4,
-      title: "Server-4",
-      ip: "192.168.1.13",
-      username: "admin",
-      order: 4,
-      interval: 60,
-      status: "offline",
-      cpu: 0,
-      ram: 0,
-      disk: 70,
-    },
-  ];
+  const fetchServers = useCallback(async (showLoading = false) => {
+    try {
+      if (showLoading) setLoading(true);
+
+      setErrorMessage("");
+
+      const info = await cupServerService.getInfo();
+      const mappedServers = info.lists.map(mapCupServerToServer);
+
+      setServers(mappedServers);
+    } catch (error) {
+      console.log("SERVER MONITORING ERROR:", error);
+      setErrorMessage("خطا در دریافت اطلاعات مانیتورینگ سرور");
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchServers(true);
+
+    const intervalId = window.setInterval(() => {
+      fetchServers(false);
+    }, 2000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchServers]);
 
   const handleEdit = (server: Server) => {
     setEditingServer(server);
@@ -90,39 +77,56 @@ export default function ServerMonitoringPage() {
 
   return (
     <div className="space-y-6">
-
-      {/* Tabs */}
       <div className="flex gap-4 border-b border-gray-200">
-        <TabButton
-          active={tab === "dashboard"}
-          onClick={() => setTab("dashboard")}
-        >
+        <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
           داشبورد
         </TabButton>
 
-        <TabButton
-          active={tab === "list"}
-          onClick={() => setTab("list")}
-        >
+        <TabButton active={tab === "list"} onClick={() => setTab("list")}>
           لیست سرورها
         </TabButton>
       </div>
 
-      {/* Dashboard */}
-      {tab === "dashboard" && (
-        <ServersDashboard servers={servers} />
+      {loading && servers.length === 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white py-10 text-center text-sm font-bold text-slate-500 shadow-sm">
+          در حال دریافت اطلاعات سرورها...
+        </div>
       )}
 
-      {/* Table */}
-      {tab === "list" && (
-        <ServersTable
-          servers={servers}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-        />
+      {!loading && errorMessage && servers.length === 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-8 text-center">
+          <p className="text-sm font-bold text-rose-700">{errorMessage}</p>
+
+          <button
+            type="button"
+            onClick={() => fetchServers(true)}
+            className="mt-3 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-rose-700"
+          >
+            تلاش مجدد
+          </button>
+        </div>
       )}
 
-      {/* Modal */}
+      {!loading && !errorMessage && servers.length === 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white py-10 text-center text-sm font-bold text-slate-500 shadow-sm">
+          اطلاعاتی برای نمایش وجود ندارد.
+        </div>
+      )}
+
+      {servers.length > 0 && (
+        <>
+          {tab === "dashboard" && <ServersDashboard servers={servers} />}
+
+          {tab === "list" && (
+            <ServersTable
+              servers={servers}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
+          )}
+        </>
+      )}
+
       <EditServerModal
         server={editingServer}
         open={modalOpen}

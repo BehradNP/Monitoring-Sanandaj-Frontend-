@@ -1,21 +1,14 @@
-type Server = {
-  name: string;
-  status: "online" | "offline";
-  ip: string;
-  cpu: number;
-  ram: number;
-  disk: number;
-};
+import type { Server } from "./ServersTable";
 
 export default function ServersSummary({ servers }: { servers: Server[] }) {
   const online = servers.filter((s) => s.status === "online").length;
   const offline = servers.filter((s) => s.status === "offline").length;
 
   const avgCpu =
-    servers.reduce((acc, s) => acc + s.cpu, 0) / (servers.length || 1);
+    servers.reduce((acc, s) => acc + (Number(s.cpu) || 0), 0) / (servers.length || 1);
 
   const avgRam =
-    servers.reduce((acc, s) => acc + s.ram, 0) / (servers.length || 1);
+    servers.reduce((acc, s) => acc + (Number(s.ram) || 0), 0) / (servers.length || 1);
 
   const cards = [
     {

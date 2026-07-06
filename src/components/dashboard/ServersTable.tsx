@@ -5,10 +5,15 @@ import { FaEdit, FaTrash } from "react-icons/fa";
 export type Server = {
   id: number;
   title: string;
+  name?: string;
   ip: string;
   username: string;
   order: number;
   interval: number;
+  status: "online" | "offline";
+  cpu: number;
+  ram: number;
+  disk: number;
 };
 
 export default function ServersTable({
@@ -23,7 +28,6 @@ export default function ServersTable({
   return (
     <div className="bg-white border border-slate-200 rounded-xl shadow overflow-hidden">
       <table className="w-full text-sm text-center text-slate-700">
-
         <thead className="bg-slate-100 text-slate-700">
           <tr>
             <th className="p-3 font-bold">ردیف</th>
@@ -32,6 +36,7 @@ export default function ServersTable({
             <th className="p-3 font-bold">UserName</th>
             <th className="p-3 font-bold">ترتیب</th>
             <th className="p-3 font-bold">زمان گرفتن اطلاعات (ثانیه)</th>
+            <th className="p-3 font-bold">وضعیت</th>
             <th className="p-3 font-bold">عملیات</th>
           </tr>
         </thead>
@@ -50,6 +55,19 @@ export default function ServersTable({
               <td className="p-3">{server.interval}</td>
 
               <td className="p-3">
+                <span
+                  className={[
+                    "rounded px-2 py-1 text-xs font-bold",
+                    server.status === "online"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-red-100 text-red-700",
+                  ].join(" ")}
+                >
+                  {server.status === "online" ? "آنلاین" : "آفلاین"}
+                </span>
+              </td>
+
+              <td className="p-3">
                 <div className="flex justify-center gap-2">
                   <button
                     onClick={() => onEdit(server)}
@@ -66,11 +84,9 @@ export default function ServersTable({
                   </button>
                 </div>
               </td>
-
             </tr>
           ))}
         </tbody>
-
       </table>
     </div>
   );

@@ -1,13 +1,5 @@
 import ServersSummary from "./ServersSummary";
-
-type Server = {
-  name: string;
-  status: "online" | "offline";
-  ip: string;
-  cpu: number;
-  ram: number;
-  disk: number;
-};
+import type { Server } from "./ServersTable";
 
 function StatusBadge({ status }: { status: "online" | "offline" }) {
   if (status === "online") {
@@ -33,12 +25,12 @@ export default function ServersDashboard({ servers }: { servers: Server[] }) {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {servers.map((s) => (
           <div
-            key={s.ip}
+            key={s.id}
             className="bg-white rounded-xl shadow border border-gray-100 p-4 space-y-3"
           >
             <div className="flex justify-between items-center">
               <div className="text-slate-800 font-semibold flex items-center gap-2">
-                🖥 {s.name}
+                🖥 {s.name || s.title}
               </div>
 
               <StatusBadge status={s.status} />
@@ -57,7 +49,7 @@ export default function ServersDashboard({ servers }: { servers: Server[] }) {
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
-  const safeValue = value ?? 0;
+  const safeValue = Math.max(0, Math.min(Number(value) || 0, 100));
 
   return (
     <div>
