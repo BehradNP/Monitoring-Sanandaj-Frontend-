@@ -32,8 +32,14 @@ const getTotal = <T>(response: ApiListResponse<T>) => {
   return Number(response.Total ?? response.total ?? 0);
 };
 
-const createListPayload = (page: number, pageSize: number): PersonalListPayload => {
-  return {
+const normalizeSearchText = (value: string) => {
+  return value.replace(/ي/g, "ی").replace(/ك/g, "ک").trim();
+};
+
+const createListPayload = (page: number, pageSize: number, search = ""): PersonalListPayload => {
+  const cleanSearch = normalizeSearchText(search);
+
+  const payload = {
     page,
     pageSize,
     skip: (page - 1) * pageSize,
@@ -41,7 +47,23 @@ const createListPayload = (page: number, pageSize: number): PersonalListPayload 
     sort: [],
     group: [],
     filter: null,
-  };
+  } as any;
+
+  if (cleanSearch.length >= 3) {
+    payload.filter = {
+      logic: "or",
+      filters: [
+        { field: "FristName", operator: "contains", value: cleanSearch },
+        { field: "LastName", operator: "contains", value: cleanSearch },
+        { field: "Code", operator: "contains", value: cleanSearch },
+        { field: "NationalId", operator: "contains", value: cleanSearch },
+        { field: "CurrentJobHeld", operator: "contains", value: cleanSearch },
+        { field: "Employment", operator: "contains", value: cleanSearch },
+      ],
+    };
+  }
+
+  return payload as PersonalListPayload;
 };
 
 const splitFullName = (fullName: string) => {
@@ -122,7 +144,8 @@ const editPayloadFromUser = (user: SecurityUser): PersonalEditPayload => {
 export const personalService = {
   async getUsers(
     page = 1,
-    pageSize = 10
+    pageSize = 10,
+    search = ""
   ): Promise<{
     users: SecurityUser[];
     total: number;
@@ -132,7 +155,7 @@ export const personalService = {
       PersonalListPayload
     >(
       API_ENDPOINTS.personal.list,
-      createListPayload(page, pageSize),
+      createListPayload(page, pageSize, search),
       jsonPatchConfig()
     );
 

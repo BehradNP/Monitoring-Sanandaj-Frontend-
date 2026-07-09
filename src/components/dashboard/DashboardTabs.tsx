@@ -15,14 +15,24 @@ type DashboardTabsProps = {
   onRetryReport?: () => void;
 };
 
-const PIE_COLORS = ["#60a5fa", "#34d399", "#a78bfa", "#fb923c", "#94a3b8", "#38bdf8", "#f472b6", "#22c55e", "#eab308", "#64748b"];
+const PIE_COLORS = ["#2f7f86", "#163647", "#8b5cf6", "#f59e0b", "#0ea5e9", "#22c55e", "#ef4444", "#14b8a6", "#64748b", "#a855f7", "#f97316", "#06b6d4"];
 
-function isValidColor(color: string) {
-  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color);
+function normalizeKey(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
 }
 
-function getSafeColor(color: string, index: number) {
-  return isValidColor(color) ? color : PIE_COLORS[index % PIE_COLORS.length];
+function getStableColor(name: string) {
+  const key = normalizeKey(name);
+
+  if (!key) return PIE_COLORS[0];
+
+  let hash = 0;
+
+  for (let i = 0; i < key.length; i += 1) {
+    hash = key.charCodeAt(i) + ((hash << 5) - hash);
+  }
+
+  return PIE_COLORS[Math.abs(hash) % PIE_COLORS.length];
 }
 
 function removeHtmlTags(value: string) {
@@ -43,31 +53,89 @@ function extractRadioStatus(info: string): ServerStatus {
   return info.includes("فعال") || info.includes("✅") ? "ONLINE" : "OFFLINE";
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function getStringByKeys(value: unknown, keys: string[], fallback = "") {
+  const item = asRecord(value);
+
+  for (const key of keys) {
+    const current = item[key];
+
+    if (typeof current === "string" && current.trim()) return current.trim();
+    if (typeof current === "number" && Number.isFinite(current)) return String(current);
+  }
+
+  return fallback;
+}
+
+function getNumberValue(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    const numberValue = Number(normalized);
+    return Number.isFinite(numberValue) ? numberValue : 0;
+  }
+
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + getNumberValue(item), 0);
+  }
+
+  if (value && typeof value === "object") {
+    const item = asRecord(value);
+
+    const directValue = item.count ?? item.Count ?? item.value ?? item.Value ?? item.total ?? item.Total ?? item.y ?? item.Y ?? item.dataCount ?? item.DataCount;
+    const directNumber = getNumberValue(directValue);
+
+    if (directNumber > 0) return directNumber;
+
+    return getNumberValue(item.data ?? item.Data ?? item.datasets ?? item.Datasets ?? item.values ?? item.Values);
+  }
+
+  return 0;
+}
+
+function getChartItemName(item: unknown, fallback: string) {
+  return getStringByKeys(item, ["lable", "label", "Label", "title", "Title", "name", "Name", "key", "Key"], fallback) || fallback;
+}
+
+function getChartItemValue(item: unknown) {
+  const record = asRecord(item);
+
+  const directValue = record.count ?? record.Count ?? record.value ?? record.Value ?? record.total ?? record.Total ?? record.number ?? record.Number ?? record.y ?? record.Y;
+  const directNumber = getNumberValue(directValue);
+
+  if (directNumber > 0) return directNumber;
+
+  return getNumberValue(record.datasets ?? record.Datasets ?? record.data ?? record.Data ?? record.values ?? record.Values);
+}
+
+function sortPieData<T extends { name: string; value: number }>(items: T[]) {
+  return [...items].sort((a, b) => {
+    if (b.value !== a.value) return b.value - a.value;
+    return a.name.localeCompare(b.name, "fa");
+  });
+}
+
 function SimplePieChart({ data }: { data: { name: string; value: number; color: string }[] }) {
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+  const safeData = data.filter((item) => item.value > 0);
+  const total = safeData.reduce((s, d) => s + d.value, 0);
+
+  if (safeData.length === 0 || total <= 0) return <EmptyState />;
+
   let acc = 0;
 
   return (
-    <div className="flex gap-6 items-center">
-      <div
-        className="relative w-40 h-40 rounded-full"
-        style={{
-          background: `conic-gradient(${data
-            .map((d) => {
-              const from = acc;
-              const to = acc + (d.value / total) * 100;
-              acc = to;
-              return `${d.color} ${from}% ${to}%`;
-            })
-            .join(",")})`,
-        }}
-      />
+    <div className="flex gap-6 items-center justify-center">
+      <div className="relative w-40 h-40 rounded-full border border-slate-100 shadow-sm shrink-0" style={{ background: `conic-gradient(${safeData.map((d) => { const from = acc; const to = acc + (d.value / total) * 100; acc = to; return `${d.color} ${from}% ${to}%`; }).join(",")})` }} />
 
-      <div className="space-y-2 text-sm">
-        {data.map((d) => (
+      <div className="space-y-2 text-sm min-w-0">
+        {safeData.map((d) => (
           <div key={d.name} className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-sm" style={{ background: d.color }} />
-            <span className="text-slate-800 font-medium">{d.name}</span>
+            <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: d.color }} />
+            <span className="text-slate-800 font-medium truncate max-w-[280px]">{d.name}</span>
             <span className="text-slate-600 mr-auto">{d.value}</span>
           </div>
         ))}
@@ -237,38 +305,41 @@ function RegionsTotalOnlineBarChart({ title, data }: { title: string; data: { na
 }
 
 function buildOsPieData(report: DashboardReportData | null) {
-  return (report?.reportOs ?? [])
-    .filter((item) => item.count > 0)
-    .map((item, index) => ({
-      name: item.lable || item.label || "نامشخص",
-      value: item.count,
-      color: getSafeColor(item.color, index),
-    }));
-}
+  const items = report?.reportOs ?? [];
 
-function getDatasetValue(value: unknown): number {
-  if (typeof value === "number") return value;
+  return sortPieData(
+    items
+      .map((item, index) => {
+        const name = getChartItemName(item, `سیستم عامل ${index + 1}`);
+        const value = getChartItemValue(item);
 
-  if (Array.isArray(value)) {
-    return value.reduce((sum, item) => sum + getDatasetValue(item), 0);
-  }
-
-  if (value && typeof value === "object") {
-    const item = value as Record<string, unknown>;
-    return getDatasetValue(item.count ?? item.value ?? item.data);
-  }
-
-  return 0;
+        return {
+          name,
+          value,
+          color: getStableColor(name),
+        };
+      })
+      .filter((item) => item.value > 0)
+  );
 }
 
 function buildHardwarePieData(report: DashboardReportData | null) {
-  return (report?.reportHard ?? [])
-    .map((item, index) => ({
-      name: item.lable || item.label || "نامشخص",
-      value: getDatasetValue(item.datasets),
-      color: getSafeColor(item.color, index),
-    }))
-    .filter((item) => item.value > 0);
+  const items = report?.reportHard ?? [];
+
+  return sortPieData(
+    items
+      .map((item, index) => {
+        const name = getChartItemName(item, `سخت افزار ${index + 1}`);
+        const value = getChartItemValue(item);
+
+        return {
+          name,
+          value,
+          color: getStableColor(name),
+        };
+      })
+      .filter((item) => item.value > 0)
+  );
 }
 
 function buildRegionsData(report: DashboardReportData | null) {
@@ -283,7 +354,7 @@ function buildRegionsData(report: DashboardReportData | null) {
   const length = Math.max(totalData.length, onlineData.length, hardItems.length);
 
   return Array.from({ length }).map((_, index) => ({
-    name: hardItems[index]?.lable || hardItems[index]?.label || `مورد ${index + 1}`,
+    name: getChartItemName(hardItems[index], `مورد ${index + 1}`),
     total: Number(totalData[index] ?? 0),
     online: Number(onlineData[index] ?? 0),
   }));
@@ -522,17 +593,7 @@ function NetworkTab({ report, reportLoading, reportError, onRetryReport }: Dashb
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={goToPrevPage}
-                disabled={currentPage === 1}
-                className={[
-                  "rounded-lg border px-3 py-2 text-[12px] font-bold transition",
-                  currentPage === 1
-                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
-                ].join(" ")}
-              >
+              <button type="button" onClick={goToPrevPage} disabled={currentPage === 1} className={["rounded-lg border px-3 py-2 text-[12px] font-bold transition", currentPage === 1 ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"].join(" ")}>
                 قبلی
               </button>
 
@@ -540,17 +601,7 @@ function NetworkTab({ report, reportLoading, reportError, onRetryReport }: Dashb
                 صفحه {currentPage} از {totalPages}
               </span>
 
-              <button
-                type="button"
-                onClick={goToNextPage}
-                disabled={currentPage === totalPages}
-                className={[
-                  "rounded-lg border px-3 py-2 text-[12px] font-bold transition",
-                  currentPage === totalPages
-                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
-                ].join(" ")}
-              >
+              <button type="button" onClick={goToNextPage} disabled={currentPage === totalPages} className={["rounded-lg border px-3 py-2 text-[12px] font-bold transition", currentPage === totalPages ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"].join(" ")}>
                 بعدی
               </button>
             </div>

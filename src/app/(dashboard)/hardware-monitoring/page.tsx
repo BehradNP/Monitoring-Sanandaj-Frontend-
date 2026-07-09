@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Eye, Loader2, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Loader2, Pencil } from "lucide-react";
 import hardwareMonitoringService from "@/services/hardware-monitoring-service";
 import type { CategoryOption, HardwareMonitoringRow, HardwareMonitoringTab, PersonalOption } from "@/types/hardware-monitoring";
+
+const PAGE_SIZE = 10;
 
 function TabBtn({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
@@ -222,8 +224,15 @@ export default function HardwareMonitoringPage() {
   const [lookupsLoading, setLookupsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const data = tab === "network" ? networkData : devicesData;
+  const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE));
+  const startIndex = (currentPage - 1) * PAGE_SIZE;
+  const endIndex = startIndex + PAGE_SIZE;
+  const paginatedData = data.slice(startIndex, endIndex);
+  const fromRow = data.length === 0 ? 0 : startIndex + 1;
+  const toRow = Math.min(endIndex, data.length);
 
   async function loadRows(selectedTab: HardwareMonitoringTab) {
     try {
@@ -264,12 +273,17 @@ export default function HardwareMonitoringPage() {
   }
 
   useEffect(() => {
+    setCurrentPage(1);
     loadRows(tab);
   }, [tab]);
 
   useEffect(() => {
     loadLookups();
   }, []);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   async function handleSaveEdit(personalId: number, categoryId: number) {
     if (!editRow) return;
@@ -292,6 +306,11 @@ export default function HardwareMonitoringPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function goToPage(page: number) {
+    const safePage = Math.min(Math.max(page, 1), totalPages);
+    setCurrentPage(safePage);
   }
 
   return (
@@ -352,7 +371,7 @@ export default function HardwareMonitoringPage() {
               </tr>
             )}
 
-            {!loading && !errorMessage && data.map((row) => (
+            {!loading && !errorMessage && paginatedData.map((row) => (
               <tr key={row.guid || row.id} className="hover:bg-slate-50 transition-colors">
                 <td className="px-3 py-3">{row.ip}</td>
                 <td className="px-3 py-3">{row.mac}</td>
@@ -378,6 +397,34 @@ export default function HardwareMonitoringPage() {
             ))}
           </tbody>
         </table>
+
+        {!loading && !errorMessage && data.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 mt-4 border-t border-slate-100">
+            <div className="text-xs text-slate-500">
+              نمایش {fromRow} تا {toRow} از {data.length} ردیف
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1} className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                <ChevronRight size={17} />
+              </button>
+
+              {Array.from({ length: totalPages }).map((_, index) => {
+                const page = index + 1;
+
+                return (
+                  <button key={page} onClick={() => goToPage(page)} className={`w-9 h-9 rounded-lg border text-xs font-semibold transition ${currentPage === page ? "bg-[#2f7f86] border-[#2f7f86] text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                    {page}
+                  </button>
+                );
+              })}
+
+              <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                <ChevronLeft size={17} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <InfoModal open={modalOpen} onClose={() => setModalOpen(false)} />
