@@ -20,6 +20,12 @@ import {
   FiChevronDown,
 } from "react-icons/fi";
 
+/* ================== TYPES ================== */
+
+type SidebarProps = {
+  className?: string;
+};
+
 /* ================== HELPERS ================== */
 
 function isActive(pathname: string, href?: string) {
@@ -57,6 +63,7 @@ function ConfirmLogoutModal({
         <div className="text-[15px] font-extrabold text-slate-900 mb-2">
           خروج از حساب
         </div>
+
         <div className="text-[13px] text-slate-700 mb-6 leading-6">
           آیا مطمئنید می‌خواهید از حساب خارج شوید؟
         </div>
@@ -85,7 +92,7 @@ function ConfirmLogoutModal({
 
 /* ================== SIDEBAR ================== */
 
-export default function Sidebar() {
+export default function Sidebar({ className = "" }: SidebarProps) {
   const pathname = usePathname();
 
   const [monitoringOpen, setMonitoringOpen] = useState(true);
@@ -96,22 +103,26 @@ export default function Sidebar() {
 
   const [openLogout, setOpenLogout] = useState(false);
 
-const handleConfirmLogout = () => {
-  localStorage.removeItem("token"); // یا session شما
-  window.location.href = "/Login";
-};
+  const handleConfirmLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userProfile");
+    window.location.href = "/Login";
+  };
 
   return (
     <>
       <aside
-        className="
+        className={[
+          `
           h-[calc(100vh-2rem)] w-[260px] shrink-0
           my-4 mr-4
           flex flex-col justify-between
           rounded-3xl
           text-white px-5 py-5
           overflow-hidden
-        "
+        `,
+          className,
+        ].join(" ")}
         style={{
           background: "linear-gradient(180deg, #2f7f86 0%, #163647 100%)",
         }}
@@ -164,12 +175,14 @@ const handleConfirmLogout = () => {
                 href="/network-monitoring"
                 active={isActive(pathname, "/network-monitoring")}
               />
+
               <SubMenuItem
                 icon={<FiServer size={16} />}
                 title="مانیتورینگ سرور"
                 href="/server-monitoring"
                 active={isActive(pathname, "/server-monitoring")}
               />
+
               <SubMenuItem
                 icon={<FiCpu size={16} />}
                 title="مانیتورینگ سخت افزار"
@@ -193,6 +206,7 @@ const handleConfirmLogout = () => {
                 href="/qr"
                 active={isActive(pathname, "/qr")}
               />
+
               <SubMenuItem
                 icon={<FiPrinter size={16} />}
                 title="گزارشات عمومی"
@@ -213,6 +227,7 @@ const handleConfirmLogout = () => {
             href="/settings"
             active={isActive(pathname, "/settings")}
           />
+
           <BottomItem
             icon={<FiShield size={16} />}
             label="حساب کاربری و امنیت"

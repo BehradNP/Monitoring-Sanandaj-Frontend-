@@ -1,5 +1,15 @@
 import { apiClient, jsonPatchConfig } from "@/lib/api/client";
-import type { CategoryApiItem, CategoryOption, EditPersonalIPNetworkPayload, HardwareMonitoringApiListResponse, HardwareMonitoringRow, IPNetworkPersonalApiItem, NormalizedHardwareMonitoringList, PersonalApiItem, PersonalOption } from "@/types/hardware-monitoring";
+import type {
+  CategoryApiItem,
+  CategoryOption,
+  EditPersonalIPNetworkPayload,
+  HardwareMonitoringApiListResponse,
+  HardwareMonitoringRow,
+  IPNetworkPersonalApiItem,
+  NormalizedHardwareMonitoringList,
+  PersonalApiItem,
+  PersonalOption,
+} from "@/types/hardware-monitoring";
 
 const HARDWARE_MONITORING_ENDPOINTS = {
   listPersonal: "/IPNetwork/ListPersonal",
@@ -10,30 +20,54 @@ const HARDWARE_MONITORING_ENDPOINTS = {
   categoryList: "/Category/List",
 };
 
+type CategoryTreeItem = CategoryOption & {
+  children: CategoryTreeItem[];
+};
+
 function cleanValue(value: unknown, fallback = "-") {
   if (value === undefined || value === null) return fallback;
+
   const text = String(value).trim();
+
   return text.length ? text : fallback;
 }
 
 function cleanEmpty(value: unknown) {
   if (value === undefined || value === null) return "";
+
   return String(value).trim();
 }
 
 function toNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value);
+
   return Number.isFinite(numberValue) ? numberValue : fallback;
 }
 
-function normalizeListResponse<T>(response: HardwareMonitoringApiListResponse<T> | T[]): NormalizedHardwareMonitoringList<T> {
-  if (Array.isArray(response)) return { rows: response, total: response.length, isSuccess: true, message: "" };
+function normalizeListResponse<T>(
+  response: HardwareMonitoringApiListResponse<T> | T[]
+): NormalizedHardwareMonitoringList<T> {
+  if (Array.isArray(response)) {
+    return {
+      rows: response,
+      total: response.length,
+      isSuccess: true,
+      message: "",
+    };
+  }
 
   const rows = response?.Data ?? response?.data ?? [];
   const total = response?.Total ?? response?.total ?? rows.length;
   const hasErrors = Boolean(response?.Errors ?? response?.errors);
-  const isSuccess = Boolean(response?.isSuccess ?? response?.issuccess ?? !hasErrors);
-  const message = cleanEmpty(response?.message ?? response?.Message ?? response?.Errors ?? response?.errors);
+  const isSuccess = Boolean(
+    response?.isSuccess ?? response?.issuccess ?? !hasErrors
+  );
+  const message = cleanEmpty(
+    response?.message ??
+      response?.Message ??
+      response?.Errors ??
+      response?.errors
+  );
 
   return {
     rows: Array.isArray(rows) ? rows : [],
@@ -43,15 +77,29 @@ function normalizeListResponse<T>(response: HardwareMonitoringApiListResponse<T>
   };
 }
 
-async function postListWithFallback<T>(url: string, payload: Record<string, unknown> = {}) {
+async function postListWithFallback<T>(
+  url: string,
+  payload: Record<string, unknown> = {}
+) {
   try {
-    const response = await apiClient.post<HardwareMonitoringApiListResponse<T>>(url, payload, jsonPatchConfig);
+    const response = await apiClient.post<HardwareMonitoringApiListResponse<T>>(
+      url,
+      payload,
+      jsonPatchConfig()
+    );
+
     return normalizeListResponse<T>(response.data);
   } catch (error: any) {
     const status = error?.response?.status;
 
     if (status === 405 || status === 415) {
-      const response = await apiClient.get<HardwareMonitoringApiListResponse<T>>(url, { params: payload });
+      const response = await apiClient.get<HardwareMonitoringApiListResponse<T>>(
+        url,
+        {
+          params: payload,
+        }
+      );
+
       return normalizeListResponse<T>(response.data);
     }
 
@@ -59,7 +107,9 @@ async function postListWithFallback<T>(url: string, payload: Record<string, unkn
   }
 }
 
-function mapIPNetworkPersonal(item: IPNetworkPersonalApiItem): HardwareMonitoringRow {
+function mapIPNetworkPersonal(
+  item: IPNetworkPersonalApiItem
+): HardwareMonitoringRow {
   const firstName = cleanEmpty(item.PersonalFristName);
   const lastName = cleanEmpty(item.PersonalLastName);
   const fullName = `${firstName} ${lastName}`.trim();
@@ -90,7 +140,11 @@ function mapPersonal(item: PersonalApiItem): PersonalOption {
   const currentJobHeld = cleanEmpty(item.CurrentJobHeld);
   const identity = code || nationalId || String(id);
   const label = identity ? `${fullName} (${identity})` : fullName;
-  const subLabelParts = [currentJobHeld, nationalId ? `کد ملی: ${nationalId}` : "", code ? `کد: ${code}` : ""].filter(Boolean);
+  const subLabelParts = [
+    currentJobHeld,
+    nationalId ? `کد ملی: ${nationalId}` : "",
+    code ? `کد: ${code}` : "",
+  ].filter(Boolean);
 
   return {
     id,
@@ -109,12 +163,15 @@ function mapPersonal(item: PersonalApiItem): PersonalOption {
 }
 
 function flattenCategories(categories: CategoryApiItem[]): CategoryOption[] {
-  const mapped = categories.map((item) => ({
+  const mapped: CategoryOption[] = categories.map((item) => ({
     id: toNumber(item.Id),
     guid: cleanEmpty(item.Guid),
     title: cleanEmpty(item.Title),
     tag: cleanEmpty(item.Tag),
-    parentId: item.ParentId === undefined || item.ParentId === null ? null : toNumber(item.ParentId),
+    parentId:
+      item.ParentId === undefined || item.ParentId === null
+        ? null
+        : toNumber(item.ParentId),
     hasChildren: Boolean(item.hasChildren),
     level: 0,
     label: "",
@@ -123,13 +180,16 @@ function flattenCategories(categories: CategoryApiItem[]): CategoryOption[] {
     raw: item,
   }));
 
-  const byId = new Map<number, CategoryOption & { children: CategoryOption[] }>();
+  const byId = new Map<number, CategoryTreeItem>();
 
   mapped.forEach((item) => {
-    byId.set(item.id, { ...item, children: [] });
+    byId.set(item.id, {
+      ...item,
+      children: [],
+    });
   });
 
-  const roots: (CategoryOption & { children: CategoryOption[] })[] = [];
+  const roots: CategoryTreeItem[] = [];
 
   byId.forEach((item) => {
     if (item.parentId && byId.has(item.parentId)) {
@@ -141,7 +201,7 @@ function flattenCategories(categories: CategoryApiItem[]): CategoryOption[] {
 
   const result: CategoryOption[] = [];
 
-  function walk(item: CategoryOption & { children: CategoryOption[] }, level: number, parentTitle = "") {
+  function walk(item: CategoryTreeItem, level: number, parentTitle = "") {
     const label = item.tag ? `${item.title} (${item.tag})` : item.title;
     const subLabel = parentTitle ? `${parentTitle} / ${label}` : label;
 
@@ -159,10 +219,14 @@ function flattenCategories(categories: CategoryApiItem[]): CategoryOption[] {
       raw: item.raw,
     });
 
-    item.children.forEach((child) => walk(child, level + 1, subLabel));
+    item.children.forEach((child) => {
+      walk(child, level + 1, subLabel);
+    });
   }
 
-  roots.forEach((item) => walk(item, 0));
+  roots.forEach((item) => {
+    walk(item, 0);
+  });
 
   return result;
 }
@@ -172,33 +236,79 @@ function mapCategoryList(items: CategoryApiItem[]) {
 }
 
 export async function getNetworkRows() {
-  const response = await postListWithFallback<IPNetworkPersonalApiItem>(HARDWARE_MONITORING_ENDPOINTS.listPersonal, {});
-  return { ...response, rows: response.rows.map(mapIPNetworkPersonal) };
+  const response = await postListWithFallback<IPNetworkPersonalApiItem>(
+    HARDWARE_MONITORING_ENDPOINTS.listPersonal,
+    {}
+  );
+
+  return {
+    ...response,
+    rows: response.rows.map(mapIPNetworkPersonal),
+  };
 }
 
 export async function getDevicesRows() {
-  const response = await postListWithFallback<IPNetworkPersonalApiItem>(HARDWARE_MONITORING_ENDPOINTS.listPersonalIPNetworkDetials, {});
-  return { ...response, rows: response.rows.map(mapIPNetworkPersonal) };
+  const response = await postListWithFallback<IPNetworkPersonalApiItem>(
+    HARDWARE_MONITORING_ENDPOINTS.listPersonalIPNetworkDetials,
+    {}
+  );
+
+  return {
+    ...response,
+    rows: response.rows.map(mapIPNetworkPersonal),
+  };
 }
 
 export async function getRowsByZone(zoneId: number | string) {
-  const response = await apiClient.get<HardwareMonitoringApiListResponse<IPNetworkPersonalApiItem>>(HARDWARE_MONITORING_ENDPOINTS.listByZone, { params: { ZoneId: zoneId } });
+  const response = await apiClient.get<
+    HardwareMonitoringApiListResponse<IPNetworkPersonalApiItem>
+  >(HARDWARE_MONITORING_ENDPOINTS.listByZone, {
+    params: {
+      ZoneId: zoneId,
+    },
+  });
+
   const normalized = normalizeListResponse(response.data);
-  return { ...normalized, rows: normalized.rows.map(mapIPNetworkPersonal) };
+
+  return {
+    ...normalized,
+    rows: normalized.rows.map(mapIPNetworkPersonal),
+  };
 }
 
 export async function getPersonalOptions() {
-  const response = await postListWithFallback<PersonalApiItem>(HARDWARE_MONITORING_ENDPOINTS.personalList, {});
-  return { ...response, rows: response.rows.map(mapPersonal).filter((item) => item.id > 0) };
+  const response = await postListWithFallback<PersonalApiItem>(
+    HARDWARE_MONITORING_ENDPOINTS.personalList,
+    {}
+  );
+
+  return {
+    ...response,
+    rows: response.rows.map(mapPersonal).filter((item) => item.id > 0),
+  };
 }
 
 export async function getCategoryOptions() {
-  const response = await postListWithFallback<CategoryApiItem>(HARDWARE_MONITORING_ENDPOINTS.categoryList, {});
-  return { ...response, rows: mapCategoryList(response.rows).filter((item) => item.id > 0) };
+  const response = await postListWithFallback<CategoryApiItem>(
+    HARDWARE_MONITORING_ENDPOINTS.categoryList,
+    {}
+  );
+
+  return {
+    ...response,
+    rows: mapCategoryList(response.rows).filter((item) => item.id > 0),
+  };
 }
 
-export async function editPersonalIPNetwork(payload: EditPersonalIPNetworkPayload) {
-  const response = await apiClient.post(HARDWARE_MONITORING_ENDPOINTS.editPersonal, payload, jsonPatchConfig);
+export async function editPersonalIPNetwork(
+  payload: EditPersonalIPNetworkPayload
+) {
+  const response = await apiClient.post(
+    HARDWARE_MONITORING_ENDPOINTS.editPersonal,
+    payload,
+    jsonPatchConfig()
+  );
+
   return response.data;
 }
 

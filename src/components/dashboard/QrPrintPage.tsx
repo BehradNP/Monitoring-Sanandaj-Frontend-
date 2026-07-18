@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { FiChevronDown, FiSearch, FiDownload, FiX } from "react-icons/fi";
 import qrReportService from "@/services/qr-report-service";
 import { exportQrRowsToPdf } from "@/services/qr-stimulsoft-service";
-import type { QrCategoryNode, QrReportRow, QrZoneOption } from "@/types/qr-report";
+import type { QrCategoryNode, QrReportRow, QrReportSearchParams, QrZoneOption } from "@/types/qr-report";
 
 const BRAND_DARK = "#163647";
 const BRAND_PRIMARY = "#2f7f86";
@@ -26,6 +26,7 @@ function Card({
         <div className="text-white font-bold text-[13px]">{titleRight}</div>
         {titleLeft ? <div className="text-white/70 text-[12px]">{titleLeft}</div> : null}
       </div>
+
       <div className="p-4 overflow-visible">{children}</div>
     </section>
   );
@@ -320,12 +321,12 @@ export default function QrReportsPage() {
   const [downloading, setDownloading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const selectedParams = useMemo(() => {
+  const selectedParams = useMemo<QrReportSearchParams>(() => {
     const cleanedNumber = number.trim().replace(/^QR[-_\s]*/i, "");
 
     return {
       zoneId: region ? Number(region) : "",
-      categoryId: hier?.id || "",
+      categoryId: hier?.id ? Number(hier.id) : "",
       tableId: cleanedNumber,
       startIp: "",
       endIp: "",
