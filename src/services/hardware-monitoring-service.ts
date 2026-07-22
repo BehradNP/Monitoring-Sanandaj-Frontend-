@@ -3,12 +3,16 @@ import type {
   CategoryApiItem,
   CategoryOption,
   EditPersonalIPNetworkPayload,
+  HardwareDetailApiItem,
+  HardwareInfoField,
   HardwareMonitoringApiListResponse,
   HardwareMonitoringRow,
+  HardwareSystemDetails,
   IPNetworkPersonalApiItem,
   NormalizedHardwareMonitoringList,
   PersonalApiItem,
   PersonalOption,
+  SoftwareInfoItem,
 } from "@/types/hardware-monitoring";
 
 const HARDWARE_MONITORING_ENDPOINTS = {
@@ -18,10 +22,32 @@ const HARDWARE_MONITORING_ENDPOINTS = {
   editPersonal: "/IPNetwork/editPersonal",
   personalList: "/Personal/List",
   categoryList: "/Category/List",
+  listInfoSoftAll: "/IPNetwork/ListInfosoftall",
+  listInfoCpu: "/IPNetwork/ListInfocpu",
+  listInfoRam: "/IPNetwork/ListInforam",
+  listInfoMotherboard: "/IPNetwork/ListInfomotherboard",
+  listInfoHdd: "/IPNetwork/ListInfohdd",
+  listInfoVga: "/IPNetwork/ListInfovag",
+};
+
+const detailListPayload = {
+  page: 1,
+  pageSize: 5000,
+  skip: 0,
+  take: 5000,
+  sort: [],
+  group: [],
+  filter: null,
 };
 
 type CategoryTreeItem = CategoryOption & {
   children: CategoryTreeItem[];
+};
+
+type FieldSpec = {
+  label: string;
+  key: string;
+  suffix?: string;
 };
 
 function cleanValue(value: unknown, fallback = "-") {
@@ -42,6 +68,10 @@ function toNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value);
 
   return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function normalizeMac(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function normalizeListResponse<T>(
@@ -105,6 +135,62 @@ async function postListWithFallback<T>(
 
     throw error;
   }
+}
+
+function readString(item: HardwareDetailApiItem, key: string) {
+  return cleanEmpty(item[key]);
+}
+
+function isSameSystem(item: HardwareDetailApiItem, row: HardwareMonitoringRow) {
+  const itemIp = cleanEmpty(item.IP);
+  const rowIp = row.ip === "-" ? "" : cleanEmpty(row.ip);
+
+  if (itemIp && rowIp && itemIp === rowIp) return true;
+
+  const itemMac = normalizeMac(cleanEmpty(item.MacAdderss));
+  const rowMac = row.mac === "-" ? "" : normalizeMac(cleanEmpty(row.mac));
+
+  if (itemMac && rowMac && itemMac === rowMac) return true;
+
+  return false;
+}
+
+function mapFieldsFromRows(
+  items: HardwareDetailApiItem[],
+  specs: FieldSpec[]
+): HardwareInfoField[] {
+  if (!items.length) return [];
+
+  return items.flatMap((item, itemIndex) => {
+    return specs
+      .map((spec) => {
+        const rawValue = readString(item, spec.key);
+
+        if (!rawValue) return null;
+
+        const label =
+          items.length > 1 ? `${spec.label} ${itemIndex + 1}` : spec.label;
+        const value = spec.suffix ? `${rawValue} ${spec.suffix}` : rawValue;
+
+        return {
+          label,
+          value,
+        };
+      })
+      .filter(Boolean) as HardwareInfoField[];
+  });
+}
+
+function mapSoftwareItem(item: HardwareDetailApiItem): SoftwareInfoItem {
+  return {
+    id: toNumber(item.Id),
+    guid: cleanEmpty(item.Guid),
+    title: cleanValue(item.Title),
+    ip: cleanValue(item.IP),
+    mac: cleanValue(item.MacAdderss),
+    zone: cleanValue(item.ZoneNetworkTitle),
+    username: cleanValue(item.UserName),
+  };
 }
 
 function mapIPNetworkPersonal(
@@ -235,6 +321,21 @@ function mapCategoryList(items: CategoryApiItem[]) {
   return flattenCategories(items);
 }
 
+async function getDetailRows(url: string) {
+  const response = await postListWithFallback<HardwareDetailApiItem>(
+    url,
+    detailListPayload
+  );
+
+  return response.rows;
+}
+
+function getSettledRows(
+  result: PromiseSettledResult<HardwareDetailApiItem[]>
+): HardwareDetailApiItem[] {
+  return result.status === "fulfilled" ? result.value : [];
+}
+
 export async function getNetworkRows() {
   const response = await postListWithFallback<IPNetworkPersonalApiItem>(
     HARDWARE_MONITORING_ENDPOINTS.listPersonal,
@@ -300,6 +401,76 @@ export async function getCategoryOptions() {
   };
 }
 
+export async function getSystemDetails(
+  row: HardwareMonitoringRow
+): Promise<HardwareSystemDetails> {
+  const [cpuResult, ramResult, motherboardResult, hddResult, vgaResult, softwareResult] =
+    await Promise.allSettled([
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoCpu),
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoRam),
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoMotherboard),
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoHdd),
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoVga),
+      getDetailRows(HARDWARE_MONITORING_ENDPOINTS.listInfoSoftAll),
+    ]);
+
+  const cpuRows = getSettledRows(cpuResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+  const ramRows = getSettledRows(ramResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+  const motherboardRows = getSettledRows(motherboardResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+  const hddRows = getSettledRows(hddResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+  const vgaRows = getSettledRows(vgaResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+  const softwareRows = getSettledRows(softwareResult).filter((item) =>
+    isSameSystem(item, row)
+  );
+
+  return {
+    cpu: mapFieldsFromRows(cpuRows, [
+      { label: "CPU", key: "CPU" },
+      { label: "سازنده", key: "CPUManufacturer" },
+      { label: "Processor ID", key: "CPUProcessorId" },
+      { label: "تعداد Core", key: "CPUNumberOfCores" },
+      { label: "Logical Processor", key: "CPUNumberOfLogicalProcessors" },
+      { label: "Architecture", key: "CPUNArchitecture" },
+    ]),
+    ram: mapFieldsFromRows(ramRows, [
+      { label: "ظرفیت", key: "RAMCapacity", suffix: "GB" },
+      { label: "سازنده", key: "RAMManufacturer" },
+      { label: "Part Number", key: "RAMPartNumber" },
+      { label: "Memory Type", key: "RAMMemoryType" },
+      { label: "Speed", key: "RAMSpeed" },
+    ]),
+    motherboard: mapFieldsFromRows(motherboardRows, [
+      { label: "Device", key: "Device" },
+    ]),
+    hdd: mapFieldsFromRows(hddRows, [
+      { label: "Title", key: "Title" },
+      { label: "Name", key: "Name" },
+      { label: "Model", key: "Model" },
+      { label: "Serial", key: "Serial" },
+      { label: "Size", key: "Size" },
+      { label: "Capacity", key: "Capacity" },
+    ]),
+    vga: mapFieldsFromRows(vgaRows, [
+      { label: "کارت گرافیک", key: "VGAname" },
+      { label: "پردازنده گرافیکی", key: "VGAVideoProcessor" },
+      { label: "حالت تصویر", key: "VGAVideoModeDescription" },
+      { label: "وضعیت", key: "VGAStatus" },
+      { label: "RAM", key: "VGAAdapterRAM" },
+    ]),
+    software: softwareRows.map(mapSoftwareItem).filter((item) => item.title !== "-"),
+  };
+}
+
 export async function editPersonalIPNetwork(
   payload: EditPersonalIPNetworkPayload
 ) {
@@ -318,6 +489,7 @@ export const hardwareMonitoringService = {
   getRowsByZone,
   getPersonalOptions,
   getCategoryOptions,
+  getSystemDetails,
   editPersonalIPNetwork,
 };
 

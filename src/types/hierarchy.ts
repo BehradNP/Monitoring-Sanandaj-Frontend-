@@ -9,6 +9,21 @@ export type ApiListResponse<T> = {
   aggregates?: unknown;
   Errors?: unknown;
   errors?: unknown;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  message?: string;
+  Message?: string;
+};
+
+export type ApiResponse<T> = {
+  data?: T;
+  Data?: T;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  statusCode?: number;
+  statuscode?: number;
+  message?: string | null;
+  Message?: string | null;
 };
 
 export type HierarchyApiItem = {
@@ -30,11 +45,17 @@ export type HierarchyItem = {
   id: string;
   numericId: number;
   title: string;
-  code?: string;
+  code: string;
   parentId: number | null;
   hasChildren: boolean;
-  guid?: string;
+  guid: string;
   children: HierarchyItem[];
+};
+
+export type HierarchyData = {
+  tree: HierarchyItem[];
+  flat: HierarchyItem[];
+  total: number;
 };
 
 export type CategoryListPayload = {
@@ -45,4 +66,25 @@ export type CategoryListPayload = {
   sort: unknown[];
   group: unknown[];
   filter: unknown | null;
+};
+
+export type HierarchyFormValues = {
+  title: string;
+  code: string;
+  parentId: number | null;
+};
+
+export type CategoryCreatePayload = {
+  title: string;
+  tag: string;
+  parentId: number | null;
+};
+
+export type CategoryEditPayload = {
+  title: string;
+  tag: string;
+  parentId: number | null;
+  hasChildren: boolean;
+  id: number;
+  guid: string;
 };

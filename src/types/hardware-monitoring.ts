@@ -116,3 +116,38 @@ export type EditPersonalIPNetworkPayload = {
   id: number;
   guid: string;
 };
+
+export type HardwareDetailApiItem = {
+  [key: string]: unknown;
+  ZoneNetworkTitle?: string | null;
+  IP?: string | null;
+  MacAdderss?: string | null;
+  UserName?: string | null;
+  Title?: string | null;
+  Id?: number | null;
+  Guid?: string | null;
+};
+
+export type HardwareInfoField = {
+  label: string;
+  value: string;
+};
+
+export type SoftwareInfoItem = {
+  id: number;
+  guid: string;
+  title: string;
+  ip: string;
+  mac: string;
+  zone: string;
+  username: string;
+};
+
+export type HardwareSystemDetails = {
+  cpu: HardwareInfoField[];
+  ram: HardwareInfoField[];
+  motherboard: HardwareInfoField[];
+  hdd: HardwareInfoField[];
+  vga: HardwareInfoField[];
+  software: SoftwareInfoItem[];
+};

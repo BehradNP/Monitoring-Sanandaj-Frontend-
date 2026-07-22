@@ -73,18 +73,42 @@ export type PersonalListPayload = {
   filter: unknown | null;
 };
 
-export type PersonalCreatePayload = {
-  fristName: string;
+export type PersonnelRow = {
+  id: number;
+  guid: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  code: string;
+  nationalId: string;
+  fatherName: string;
+  currentJobHeld: string;
+  employment: string;
+  educational: string;
+  fieldOfStudy: string;
+  ip: string;
+  mac: string;
+  raw?: unknown;
+};
+
+export type PersonnelFormValues = {
+  firstName: string;
   lastName: string;
   code: string;
 };
 
+export type PersonalCreatePayload = {
+  FristName: string;
+  LastName: string;
+  Code: string;
+};
+
 export type PersonalEditPayload = {
-  id: number;
-  guid: string;
-  fristName: string;
-  lastName: string;
-  code: string;
+  FristName: string;
+  LastName: string;
+  Code: string;
+  Id: number;
+  Guid: string;
 };
 
 export type Role = "مدیر" | "مانیتورینگ" | "گزارش گیری" | "نمایش ساده";

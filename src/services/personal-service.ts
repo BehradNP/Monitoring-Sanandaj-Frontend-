@@ -1,4 +1,4 @@
-import { apiGet, apiPost, jsonPatchConfig } from "@/lib/api/client";
+import { apiClient, jsonPatchConfig } from "@/lib/api/client";
 import { API_ENDPOINTS } from "@/lib/api/endpoints";
 import type {
   ApiListResponse,
@@ -7,47 +7,60 @@ import type {
   PersonalCreatePayload,
   PersonalEditPayload,
   PersonalListPayload,
+  PersonnelFormValues,
+  PersonnelRow,
   SecurityUser,
 } from "@/types/personal";
 
-const toString = (value: unknown, fallback = "") => {
-  if (typeof value !== "string") return fallback;
-  return value.trim();
-};
+const DEFAULT_PAGE_SIZE = 3000;
 
-const toNumber = (value: unknown, fallback = 0) => {
+function cleanValue(value: unknown, fallback = "-") {
+  if (value === undefined || value === null) return fallback;
+
+  const text = String(value).trim();
+
+  return text.length ? text : fallback;
+}
+
+function cleanEmpty(value: unknown) {
+  if (value === undefined || value === null) return "";
+
+  return String(value).trim();
+}
+
+function toNumber(value: unknown, fallback = 0) {
   const numberValue = Number(value);
+
   return Number.isFinite(numberValue) ? numberValue : fallback;
-};
+}
 
-const getArrayData = <T>(response: ApiListResponse<T>) => {
+function getArrayData<T>(response: ApiListResponse<T>) {
   return response.Data ?? response.data ?? [];
-};
+}
 
-const getSingleData = <T>(response: ApiResponse<T>) => {
-  return response.data ?? response.Data ?? null;
-};
+function getTotal<T>(response: ApiListResponse<T>) {
+  const rows = getArrayData(response);
+  return toNumber(response.Total ?? response.total, rows.length);
+}
 
-const getTotal = <T>(response: ApiListResponse<T>) => {
-  return Number(response.Total ?? response.total ?? 0);
-};
+function createListPayload(
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+  search = ""
+): PersonalListPayload {
+  const safePage = Math.max(page, 1);
+  const safePageSize = Math.max(pageSize, 1);
+  const cleanSearch = search.trim();
 
-const normalizeSearchText = (value: string) => {
-  return value.replace(/ي/g, "ی").replace(/ك/g, "ک").trim();
-};
-
-const createListPayload = (page: number, pageSize: number, search = ""): PersonalListPayload => {
-  const cleanSearch = normalizeSearchText(search);
-
-  const payload = {
-    page,
-    pageSize,
-    skip: (page - 1) * pageSize,
-    take: pageSize,
+  const payload: PersonalListPayload = {
+    page: safePage,
+    pageSize: safePageSize,
+    skip: (safePage - 1) * safePageSize,
+    take: safePageSize,
     sort: [],
     group: [],
     filter: null,
-  } as any;
+  };
 
   if (cleanSearch.length >= 3) {
     payload.filter = {
@@ -63,156 +76,132 @@ const createListPayload = (page: number, pageSize: number, search = ""): Persona
     };
   }
 
-  return payload as PersonalListPayload;
-};
+  return payload;
+}
 
-const splitFullName = (fullName: string) => {
-  const cleanFullName = fullName.trim().replace(/\s+/g, " ");
-  const parts = cleanFullName.split(" ").filter(Boolean);
-
-  if (parts.length === 0) {
-    return {
-      fristName: "",
-      lastName: "",
-    };
-  }
-
-  if (parts.length === 1) {
-    return {
-      fristName: parts[0],
-      lastName: "",
-    };
-  }
-
-  return {
-    fristName: parts[0],
-    lastName: parts.slice(1).join(" "),
-  };
-};
-
-const normalizePersonalToUser = (item: PersonalApiItem): SecurityUser => {
-  const firstName = toString(
+function mapPersonnel(item: PersonalApiItem): PersonnelRow {
+  const firstName = cleanEmpty(
     item.FristName ?? item.fristName ?? item.FirstName ?? item.firstName
   );
-
-  const lastName = toString(item.LastName ?? item.lastName);
-  const fullName = `${firstName} ${lastName}`.trim() || "-";
-
-  const code = toString(item.Code ?? item.code);
-  const nationalId = toString(item.NationalId ?? item.nationalId) || code || "-";
-
-  const position =
-    toString(item.CurrentJobHeld ?? item.currentJobHeld) ||
-    toString(item.Employment ?? item.employment) ||
-    "-";
+  const lastName = cleanEmpty(item.LastName ?? item.lastName);
+  const fullName = `${firstName} ${lastName}`.trim();
 
   return {
     id: toNumber(item.Id ?? item.id),
-    guid: toString(item.Guid ?? item.guid),
-    fullName,
-    username: code || "-",
-    nationalId,
-    position,
+    guid: cleanEmpty(item.Guid ?? item.guid),
+    firstName,
+    lastName,
+    fullName: fullName || "-",
+    code: cleanValue(item.Code ?? item.code),
+    nationalId: cleanValue(item.NationalId ?? item.nationalId),
+    fatherName: cleanValue(item.FatherName ?? item.fatherName),
+    currentJobHeld: cleanValue(item.CurrentJobHeld ?? item.currentJobHeld),
+    employment: cleanValue(item.Employment ?? item.employment),
+    educational: cleanValue(item.Educational ?? item.educational),
+    fieldOfStudy: cleanValue(item.FieldOfStudy ?? item.fieldOfStudy),
+    ip: cleanValue(item.IP ?? item.ip),
+    mac: cleanValue(item.MacAdderss ?? item.macAdderss),
+    raw: item,
+  };
+}
+
+function mapSecurityUser(item: PersonalApiItem): SecurityUser {
+  const row = mapPersonnel(item);
+
+  return {
+    id: row.id,
+    guid: row.guid,
+    fullName: row.fullName,
+    username: row.code,
+    nationalId: row.nationalId,
+    position: row.currentJobHeld !== "-" ? row.currentJobHeld : row.employment,
     roles: [],
   };
-};
+}
 
-const createPayloadFromUser = (user: SecurityUser): PersonalCreatePayload => {
-  const { fristName, lastName } = splitFullName(user.fullName);
-  const code = user.username && user.username !== "-" ? user.username : user.nationalId;
-
+function createPayload(values: PersonnelFormValues): PersonalCreatePayload {
   return {
-    fristName,
-    lastName,
-    code: code && code !== "-" ? code : "",
+    FristName: values.firstName.trim(),
+    LastName: values.lastName.trim(),
+    Code: values.code.trim(),
   };
-};
+}
 
-const editPayloadFromUser = (user: SecurityUser): PersonalEditPayload => {
-  const { fristName, lastName } = splitFullName(user.fullName);
-  const code = user.username && user.username !== "-" ? user.username : user.nationalId;
-
+function editPayload(
+  row: PersonnelRow,
+  values: PersonnelFormValues
+): PersonalEditPayload {
   return {
-    id: user.id,
-    guid: user.guid || "",
-    fristName,
-    lastName,
-    code: code && code !== "-" ? code : "",
+    FristName: values.firstName.trim(),
+    LastName: values.lastName.trim(),
+    Code: values.code.trim(),
+    Id: row.id,
+    Guid: row.guid,
   };
-};
+}
 
 export const personalService = {
-  async getUsers(
-    page = 1,
-    pageSize = 10,
-    search = ""
-  ): Promise<{
-    users: SecurityUser[];
-    total: number;
-  }> {
-    const response = await apiPost<
-      ApiListResponse<PersonalApiItem>,
-      PersonalListPayload
-    >(
+  async getPersonnel(page = 1, pageSize = DEFAULT_PAGE_SIZE, search = "") {
+    const response = await apiClient.post<ApiListResponse<PersonalApiItem>>(
       API_ENDPOINTS.personal.list,
       createListPayload(page, pageSize, search),
       jsonPatchConfig()
     );
 
-    const data = getArrayData(response);
-    const users = data.map(normalizePersonalToUser);
-    const total = getTotal(response) || users.length;
+    const rows = getArrayData(response.data);
 
     return {
-      users,
-      total,
+      rows: rows.map(mapPersonnel).filter((item) => item.id > 0),
+      total: getTotal(response.data),
     };
   },
 
-  async getUserByGuid(guid: string): Promise<SecurityUser | null> {
-    if (!guid) return null;
-
-    const response = await apiGet<ApiResponse<PersonalApiItem>>(
-      `${API_ENDPOINTS.personal.get}/${encodeURIComponent(guid)}`
-    );
-
-    const data = getSingleData(response);
-
-    if (!data) return null;
-
-    return normalizePersonalToUser(data);
-  },
-
-  async createUser(user: SecurityUser): Promise<void> {
-    await apiPost<ApiResponse<unknown>, PersonalCreatePayload>(
+  async createPersonnel(values: PersonnelFormValues): Promise<ApiResponse<unknown>> {
+    const response = await apiClient.post<ApiResponse<unknown>>(
       API_ENDPOINTS.personal.create,
-      createPayloadFromUser(user),
+      createPayload(values),
       jsonPatchConfig()
     );
+
+    return response.data;
   },
 
-  async editUser(user: SecurityUser): Promise<void> {
-    if (!user.guid) {
-      throw new Error("برای ویرایش کاربر guid وجود ندارد.");
-    }
+  async editPersonnel(
+    row: PersonnelRow,
+    values: PersonnelFormValues
+  ): Promise<ApiResponse<unknown>> {
+    if (!row.guid) throw new Error("شناسه پرسنل برای ویرایش وجود ندارد.");
 
-    await apiPost<ApiResponse<unknown>, PersonalEditPayload>(
+    const response = await apiClient.post<ApiResponse<unknown>>(
       API_ENDPOINTS.personal.edit,
-      editPayloadFromUser(user),
+      editPayload(row, values),
       jsonPatchConfig()
     );
+
+    return response.data;
   },
 
-  async deleteUser(guid: string): Promise<void> {
-    if (!guid) {
-      throw new Error("برای حذف کاربر guid وجود ندارد.");
-    }
+  async deletePersonnel(row: PersonnelRow): Promise<ApiResponse<unknown>> {
+    if (!row.guid) throw new Error("شناسه پرسنل برای حذف وجود ندارد.");
 
-    await apiPost<ApiResponse<unknown>, undefined>(
+    const response = await apiClient.post<ApiResponse<unknown>>(
       API_ENDPOINTS.personal.delete,
-      undefined,
-      jsonPatchConfig({ guid })
+      null,
+      jsonPatchConfig({
+        guid: row.guid,
+      })
     );
+
+    return response.data;
+  },
+
+  async getUsers(page = 1, pageSize = 10, search = "") {
+    const response = await this.getPersonnel(page, pageSize, search);
+
+    return {
+      rows: response.rows.map((item) => mapSecurityUser(item.raw as PersonalApiItem)),
+      total: response.total,
+    };
   },
 };
 
