@@ -1,123 +1,159 @@
+import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
-import { NextResponse } from "next/server";
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://msfmapi.sanandaj.ir/api/v1").trim().replace(/\/+$/, "");
+type LoginBody = {
+  username?: string;
+  password?: string;
+};
 
-const AUTH_CLIENT_ID = process.env.AUTH_CLIENT_ID || process.env.NEXT_PUBLIC_AUTH_CLIENT_ID || "Client_UI";
-const AUTH_CLIENT_SECRET = process.env.AUTH_CLIENT_SECRET || process.env.NEXT_PUBLIC_AUTH_CLIENT_SECRET || "98fa8e277ccb46b9a518284eba50f671";
+const DEFAULT_INTERNAL_API_URL = "https://msfmapi.sanandaj.ir/api/v1";
 
-function baseUrlHasVersion(baseURL?: string) {
-  if (!baseURL) return false;
-  return /\/v\d+$/i.test(baseURL.trim().replace(/\/+$/, ""));
+function getApiBaseUrl() {
+  const baseUrl =
+    process.env.INTERNAL_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    DEFAULT_INTERNAL_API_URL;
+
+  return baseUrl.replace(/\/+$/, "");
 }
 
-function normalizeRequestUrl(url: string, baseURL: string) {
-  if (!baseUrlHasVersion(baseURL)) return url;
-  return url.replace(/^\/?v\d+(?=\/)/i, "");
-}
+function joinApiUrl(baseUrl: string, path: string) {
+  const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+  const cleanPath = path.replace(/^\/+/, "");
 
-function getNestedValue(source: unknown, keys: string[]): unknown {
-  const raw = source as Record<string, unknown> | null;
-  if (!raw) return undefined;
-
-  for (const key of keys) {
-    if (raw[key] !== undefined && raw[key] !== null) return raw[key];
+  if (cleanBaseUrl.endsWith("/api/v1") && cleanPath.startsWith("v1/")) {
+    return `${cleanBaseUrl}/${cleanPath.replace(/^v1\//, "")}`;
   }
 
-  return undefined;
+  if (cleanBaseUrl.endsWith("/v1") && cleanPath.startsWith("v1/")) {
+    return `${cleanBaseUrl}/${cleanPath.replace(/^v1\//, "")}`;
+  }
+
+  return `${cleanBaseUrl}/${cleanPath}`;
 }
 
-function extractToken(response: unknown): string | null {
-  if (typeof response === "string" && response.trim()) return response.trim();
+function getErrorMessage(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const responseData = error.response?.data;
 
-  const root = response as Record<string, unknown> | null;
-  const data = getNestedValue(response, ["data", "Data"]);
+    if (typeof responseData === "string") return responseData;
 
-  const token =
-    getNestedValue(root, ["token", "Token", "accessToken", "AccessToken", "access_token", "jwt", "Jwt"]) ??
-    getNestedValue(data, ["token", "Token", "accessToken", "AccessToken", "access_token", "jwt", "Jwt"]);
+    if (responseData && typeof responseData === "object") {
+      const data = responseData as {
+        message?: string;
+        Message?: string;
+        error?: string;
+        Error?: string;
+      };
 
-  return typeof token === "string" && token.trim() ? token.trim() : null;
-}
-
-function isApiSuccess(data: unknown) {
-  const raw = data as Record<string, unknown>;
-  return !(raw?.issuccess === false || raw?.isSuccess === false || raw?.statuscode === 2 || raw?.statusCode === 2);
-}
-
-function getApiMessage(data: unknown) {
-  const raw = data as Record<string, unknown>;
-  return String(raw?.message || raw?.Message || "عملیات با خطا مواجه شد.");
-}
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-
-    const username = String(body?.username || "").trim();
-    const password = String(body?.password || "").trim();
-
-    if (!username || !password) {
-      return NextResponse.json({ isSuccess: false, message: "نام کاربری و رمز عبور الزامی است." }, { status: 400 });
+      return (
+        data.message ||
+        data.Message ||
+        data.error ||
+        data.Error ||
+        error.message ||
+        "خطا در ارتباط با سرویس ورود"
+      );
     }
 
-    const loginBody = {
+    return error.message || "خطا در ارتباط با سرویس ورود";
+  }
+
+  if (error instanceof Error) return error.message;
+
+  return "خطا در ورود به سامانه";
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = (await request.json()) as LoginBody;
+
+    const username = body.username?.trim();
+    const password = body.password?.trim();
+
+    if (!username || !password) {
+      return NextResponse.json(
+        {
+          issuccess: false,
+          statuscode: 1,
+          message: "نام کاربری و رمز عبور الزامی است.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const clientId =
+      process.env.AUTH_CLIENT_ID ||
+      process.env.NEXT_PUBLIC_AUTH_CLIENT_ID ||
+      "Client_UI";
+
+    const clientSecret =
+      process.env.AUTH_CLIENT_SECRET ||
+      process.env.NEXT_PUBLIC_AUTH_CLIENT_SECRET;
+
+    if (!clientSecret) {
+      return NextResponse.json(
+        {
+          issuccess: false,
+          statuscode: 1,
+          message:
+            "AUTH_CLIENT_SECRET روی سرور تنظیم نشده است. فایل .env.production.local را بررسی کن و بعد دوباره build بگیر.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const apiBaseUrl = getApiBaseUrl();
+    const loginUrl = joinApiUrl(apiBaseUrl, "/User/GetToken");
+
+    const payload = {
       username,
       password,
-      client_id: AUTH_CLIENT_ID,
-      client_secret: AUTH_CLIENT_SECRET,
+      client_id: clientId,
+      client_secret: clientSecret,
     };
+
+    console.log("LOGIN REQUEST URL:", loginUrl);
+    console.log("LOGIN REQUEST USERNAME:", username);
 
     const response = await axios.request({
       method: "GET",
-      baseURL: API_BASE_URL,
-      url: normalizeRequestUrl("/v1/User/GetToken", API_BASE_URL),
-      data: loginBody,
-      timeout: Number(process.env.NEXT_PUBLIC_API_TIMEOUT || 90000),
+      url: loginUrl,
+      data: payload,
+      timeout: 90000,
       headers: {
         Accept: "application/json, text/plain, */*",
         "Content-Type": "application/json-patch+json",
       },
-      transformRequest: [
-        (data) => {
-          return JSON.stringify(data);
-        },
-      ],
+      validateStatus: () => true,
     });
 
-    const result = response.data;
+    console.log("LOGIN UPSTREAM STATUS:", response.status);
+    console.log("LOGIN UPSTREAM DATA:", response.data);
 
-    if (!isApiSuccess(result)) {
-      return NextResponse.json({ isSuccess: false, message: getApiMessage(result), raw: result }, { status: 400 });
-    }
-
-    const token = extractToken(result);
-
-    if (!token) {
-      return NextResponse.json({ isSuccess: false, message: "توکن ورود از سمت سرور دریافت نشد.", raw: result }, { status: 400 });
-    }
-
-    return NextResponse.json({
-      isSuccess: true,
-      token,
-      data: result,
-    });
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status || 500;
-      const data = error.response?.data;
-
+    if (response.status < 200 || response.status >= 300) {
       return NextResponse.json(
         {
-          isSuccess: false,
-          message: getApiMessage(data) || error.message || "خطا در ارتباط با سرور.",
-          status,
-          raw: data,
+          issuccess: false,
+          statuscode: response.status,
+          message: "خطا در ارتباط با سرویس ورود",
+          upstream: response.data,
         },
-        { status }
+        { status: response.status }
       );
     }
 
-    return NextResponse.json({ isSuccess: false, message: "خطا در ورود به سیستم." }, { status: 500 });
+    return NextResponse.json(response.data, { status: 200 });
+  } catch (error) {
+    console.log("LOGIN API ROUTE ERROR:", error);
+
+    return NextResponse.json(
+      {
+        issuccess: false,
+        statuscode: 1,
+        message: getErrorMessage(error),
+      },
+      { status: 500 }
+    );
   }
 }

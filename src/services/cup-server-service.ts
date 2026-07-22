@@ -1,121 +1,191 @@
-import { apiGet } from "@/lib/api/client";
-import { API_ENDPOINTS } from "@/lib/api/endpoints";
+import { apiClient } from "@/lib/api/client";
 import type {
-  ApiResponse,
   CupServerInfoData,
   CupServerInfoItem,
   ServerStatusRow,
 } from "@/types/cup-server";
 
-const getResponseData = <T>(response: ApiResponse<T>): T | null => {
-  return response.data ?? response.Data ?? null;
+type ApiResponse<T> = {
+  data?: T;
+  Data?: T;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  statusCode?: number;
+  statuscode?: number;
+  message?: string | null;
+  Message?: string | null;
 };
 
-const toNumber = (value: unknown, fallback = 0) => {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : fallback;
-};
+const CUP_SERVER_INFO_ENDPOINT = "/CupServer/Info";
 
-const toString = (value: unknown, fallback = "") => {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return fallback;
-};
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
 
-const toBoolean = (value: unknown, fallback = false) => {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
+function getString(item: Record<string, unknown>, keys: string[], fallback = "-") {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
   }
-  if (typeof value === "number") return value === 1;
+
   return fallback;
-};
+}
 
-const normalizeCupServerItem = (
-  item: Partial<CupServerInfoItem>
-): CupServerInfoItem => {
+function getNumber(item: Record<string, unknown>, keys: string[], fallback = 0) {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const numberValue = Number(value.trim());
+
+      if (Number.isFinite(numberValue)) {
+        return numberValue;
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function getBoolean(item: Record<string, unknown>, keys: string[], fallback = false) {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+      if (normalized === "online") return true;
+      if (normalized === "offline") return false;
+      if (normalized === "فعال") return true;
+      if (normalized === "غیرفعال") return false;
+    }
+
+    if (typeof value === "number") {
+      return value === 1;
+    }
+  }
+
+  return fallback;
+}
+
+function getResponseData<T>(responseData: unknown): T | null {
+  const payload = asRecord(responseData);
+  const firstLevelData = payload.data ?? payload.Data;
+
+  if (!firstLevelData) {
+    return null;
+  }
+
+  const firstLevelRecord = asRecord(firstLevelData);
+  const nestedData = firstLevelRecord.data ?? firstLevelRecord.Data;
+
+  if (nestedData) {
+    return nestedData as T;
+  }
+
+  return firstLevelData as T;
+}
+
+function normalizeCupServerItem(value: unknown): CupServerInfoItem {
+  const item = asRecord(value);
+
   return {
-    id: toNumber(item.id ?? item.Id),
-    title: toString(item.title ?? item.Title),
-    ip: toString(item.ip ?? item.IP),
-    isOnline: toBoolean(item.isOnline ?? item.IsOnline),
-    avgCup: toNumber(item.avgCup ?? item.AvgCup),
-    timeSc: toNumber(item.timeSc ?? item.TimeSc),
-    totalRam: toNumber(item.totalRam ?? item.TotalRam),
-    avgCRam: toNumber(item.avgCRam ?? item.AvgCRam),
-    avgHDD: toNumber(item.avgHDD ?? item.AvgHDD),
-    order: toNumber(item.order ?? item.Order),
-    guid: toString(item.guid ?? item.Guid),
-
-    Id: item.Id,
-    Title: item.Title,
-    IP: item.IP,
-    IsOnline: item.IsOnline,
-    AvgCup: item.AvgCup,
-    TimeSc: item.TimeSc,
-    TotalRam: item.TotalRam,
-    AvgCRam: item.AvgCRam,
-    AvgHDD: item.AvgHDD,
-    Order: item.Order,
-    Guid: item.Guid,
+    id: getNumber(item, ["id", "Id"]),
+    title: getString(item, ["title", "Title", "name", "Name"], "-"),
+    ip: getString(item, ["ip", "IP"], "-"),
+    isOnline: getBoolean(item, ["isOnline", "IsOnline", "online", "Online"]),
+    avgCup: getNumber(item, ["avgCup", "AvgCup", "avgCPU", "AvgCPU", "cpu", "CPU"]),
+    timeSc: getNumber(item, ["timeSc", "TimeSc", "interval", "Interval"]),
+    totalRam: getNumber(item, ["totalRam", "TotalRam"]),
+    avgCRam: getNumber(item, ["avgCRam", "AvgCRam", "ram", "RAM"]),
+    avgHDD: getNumber(item, ["avgHDD", "AvgHDD", "disk", "Disk", "hdd", "HDD"]),
+    order: getNumber(item, ["order", "Order"]),
   };
-};
+}
 
-const normalizeCupServerInfo = (
-  data: Partial<CupServerInfoData> | null
-): CupServerInfoData => {
-  const lists = Array.isArray(data?.lists)
-    ? data.lists
-    : Array.isArray(data?.Lists)
-      ? data.Lists
-      : [];
+function normalizeCupServerInfo(data: Partial<CupServerInfoData> | null): CupServerInfoData {
+  const item = asRecord(data);
+  const rawLists = item.lists ?? item.Lists ?? [];
+
+  const lists = Array.isArray(rawLists) ? rawLists.map(normalizeCupServerItem) : [];
 
   return {
-    countOnline: toNumber(data?.countOnline ?? data?.CountOnline),
-    countOffline: toNumber(data?.countOffline ?? data?.CountOffline),
-    avgCup: toNumber(data?.avgCup ?? data?.AvgCup),
-    avgCRam: toNumber(data?.avgCRam ?? data?.AvgCRam),
-    order: toNumber(data?.order ?? data?.Order),
-    lists: lists.map(normalizeCupServerItem),
-
-    CountOnline: data?.CountOnline,
-    CountOffline: data?.CountOffline,
-    AvgCup: data?.AvgCup,
-    AvgCRam: data?.AvgCRam,
-    Order: data?.Order,
-    Lists: data?.Lists,
+    countOnline: getNumber(item, ["countOnline", "CountOnline"]),
+    countOffline: getNumber(item, ["countOffline", "CountOffline"]),
+    avgCup: getNumber(item, ["avgCup", "AvgCup", "avgCPU", "AvgCPU"]),
+    avgCRam: getNumber(item, ["avgCRam", "AvgCRam"]),
+    order: getNumber(item, ["order", "Order"]),
+    lists,
   };
-};
+}
+
+function mapCupServerItemToStatusRow(item: CupServerInfoItem): ServerStatusRow {
+  return {
+    id: item.id || 0,
+    name: item.title || "-",
+    ip: item.ip || "-",
+    status: item.isOnline ? "ONLINE" : "OFFLINE",
+    cpu: Number(item.avgCup) || 0,
+    ram: Number(item.avgCRam) || 0,
+    disk: Number(item.avgHDD) || 0,
+    interval: Number(item.timeSc) || 0,
+    order: Number(item.order) || 0,
+  };
+}
 
 export const cupServerService = {
   async getInfo(): Promise<CupServerInfoData> {
-    const response = await apiGet<ApiResponse<CupServerInfoData>>(
-      API_ENDPOINTS.cupServer.info
+    const response = await apiClient.get<ApiResponse<CupServerInfoData>>(
+      CUP_SERVER_INFO_ENDPOINT
     );
 
-    const data = getResponseData(response);
+    const data = getResponseData<CupServerInfoData>(response.data);
 
     return normalizeCupServerInfo(data);
+  },
+
+  async getInfoHome(): Promise<CupServerInfoData> {
+    return this.getInfo();
   },
 
   async getServerStatusRows(): Promise<ServerStatusRow[]> {
     const info = await this.getInfo();
 
-    return info.lists.map((server) => ({
-      id: server.id,
-      guid: server.guid,
-      name: server.title,
-      status: server.isOnline ? "ONLINE" : "OFFLINE",
-      ip: server.ip,
-      cpu: server.avgCup,
-      ram: server.avgCRam,
-      disk: server.avgHDD,
-      interval: server.timeSc,
-      order: server.order,
+    return info.lists.map(mapCupServerItemToStatusRow);
+  },
+
+  async getServers() {
+    const info = await this.getInfo();
+
+    return info.lists.map((item) => ({
+      id: item.id || 0,
+      title: item.title || "-",
+      name: item.title || "-",
+      ip: item.ip || "-",
       username: "-",
-      raw: server,
+      order: item.order || 0,
+      interval: item.timeSc || 0,
+      status: item.isOnline ? "online" : "offline",
+      cpu: item.avgCup || 0,
+      ram: item.avgCRam || 0,
+      disk: item.avgHDD || 0,
     }));
   },
 };

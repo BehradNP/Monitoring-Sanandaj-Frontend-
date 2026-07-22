@@ -1,70 +1,127 @@
 import { apiPost, jsonPatchConfig } from "@/lib/api/client";
 import type {
-  ApiListResponse,
-  GeneralReportPayload,
   GeneralReportRow,
   GeneralReportTabKey,
 } from "@/types/general-reports";
 
-const GENERAL_REPORT_ENDPOINTS: Record<GeneralReportTabKey, string> = {
-  cpu: "/v1/IPNetwork/ListInfocpu",
-  gpu: "/v1/IPNetwork/ListInfovag",
-  mobo: "/v1/IPNetwork/ListInfomotherboard",
-  ram: "/v1/IPNetwork/ListInforam",
-  hdd: "/v1/IPNetwork/ListInfohdd",
-  hw: "/v1/IPNetwork/ListInfo",
-  sw: "/v1/IPNetwork/InfoSoftall",
-  os: "/v1/IPNetwork/InfoOS",
+type ApiListResponse<T> = {
+  Data?: T[];
+  data?: T[];
+  Total?: number;
+  total?: number;
+  Group?: unknown;
+  group?: unknown;
+  Aggregates?: unknown;
+  aggregates?: unknown;
+  Errors?: unknown;
+  errors?: unknown;
 };
 
-const SEARCH_FIELDS: Record<GeneralReportTabKey, string[]> = {
-  cpu: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "CPU", "CPUManufacturer", "CPUProcessorId"],
-  gpu: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "VGAVideoProcessor", "VGAname", "VGAStatus"],
-  mobo: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "Device"],
-  ram: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "RAMPartNumber", "RAMManufacturer", "RAMCapacity"],
-  hdd: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "Title", "Device"],
-  hw: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "Title", "Device"],
-  sw: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "Title"],
-  os: ["ZoneNetworkTitle", "IP", "MacAdderss", "UserName", "Caption", "Manufacturer", "Version", "SerialNumber"],
+type GeneralReportPayload = {
+  page: number;
+  pageSize: number;
+  skip: number;
+  take: number;
+  sort: unknown[];
+  group: unknown[];
+  filter: unknown | null;
 };
 
-const getArrayData = <T>(response: ApiListResponse<T>) => {
-  return response.Data ?? response.data ?? [];
+const GENERAL_REPORT_ENDPOINTS: Record<string, string> = {
+  cpu: "/IPNetwork/ListInfocpu",
+  gpu: "/IPNetwork/ListInfovag",
+  vga: "/IPNetwork/ListInfovag",
+  mobo: "/IPNetwork/ListInfomotherboard",
+  motherboard: "/IPNetwork/ListInfomotherboard",
+  ram: "/IPNetwork/ListInforam",
+  hw: "/IPNetwork/ListInfohdd",
+  hdd: "/IPNetwork/ListInfohdd",
+  sw: "/IPNetwork/InfoSoftall",
+  software: "/IPNetwork/InfoSoftall",
+  os: "/IPNetwork/InfoOS",
 };
 
-const getTotal = <T>(response: ApiListResponse<T>) => {
-  return Number(response.Total ?? response.total ?? 0);
-};
+function getEndpoint(tab: GeneralReportTabKey) {
+  return GENERAL_REPORT_ENDPOINTS[String(tab)] ?? "/IPNetwork/InfoOS";
+}
 
-const createSearchFilter = (tab: GeneralReportTabKey, search: string) => {
-  const cleanSearch = search.trim();
+function getArrayData<T>(response: ApiListResponse<T>): T[] {
+  const rows = response.Data ?? response.data ?? [];
 
-  if (!cleanSearch) return null;
+  return Array.isArray(rows) ? rows : [];
+}
 
-  return {
-    logic: "or",
-    filters: SEARCH_FIELDS[tab].map((field) => ({
-      field,
+function getTotal<T>(response: ApiListResponse<T>) {
+  const rows = getArrayData(response);
+  const total = response.Total ?? response.total;
+
+  if (typeof total === "number" && Number.isFinite(total)) {
+    return total;
+  }
+
+  if (typeof total === "string") {
+    const numericTotal = Number(total);
+
+    if (Number.isFinite(numericTotal)) {
+      return numericTotal;
+    }
+  }
+
+  return rows.length;
+}
+
+function createFilter({
+  region,
+  search,
+}: {
+  region?: string;
+  search?: string;
+}) {
+  const filters: unknown[] = [];
+
+  const cleanRegion = region?.trim();
+  const cleanSearch = search?.trim();
+
+  if (cleanRegion) {
+    filters.push({
+      field: "ZoneNetworkTitle",
       operator: "contains",
-      value: cleanSearch,
-    })),
-  };
-};
+      value: cleanRegion,
+    });
+  }
 
-const createRegionFilter = (region: string) => {
-  const cleanRegion = region.trim();
-
-  if (!cleanRegion) return null;
-
-  return {
-    field: "ZoneNetworkTitle",
-    operator: "eq",
-    value: cleanRegion,
-  };
-};
-
-const createFilter = (tab: GeneralReportTabKey, region: string, search: string) => {
-  const filters = [createRegionFilter(region), createSearchFilter(tab, search)].filter(Boolean);
+  if (cleanSearch) {
+    filters.push({
+      logic: "or",
+      filters: [
+        {
+          field: "IP",
+          operator: "contains",
+          value: cleanSearch,
+        },
+        {
+          field: "MacAdderss",
+          operator: "contains",
+          value: cleanSearch,
+        },
+        {
+          field: "Title",
+          operator: "contains",
+          value: cleanSearch,
+        },
+        {
+          field: "UserName",
+          operator: "contains",
+          value: cleanSearch,
+        },
+        {
+          field: "ZoneNetworkTitle",
+          operator: "contains",
+          value: cleanSearch,
+        },
+      ],
+    });
+  }
 
   if (filters.length === 0) return null;
 
@@ -74,39 +131,43 @@ const createFilter = (tab: GeneralReportTabKey, region: string, search: string) 
     logic: "and",
     filters,
   };
-};
+}
 
-const createPayload = ({
-  tab,
+function createPayload({
   page,
   pageSize,
   region,
   search,
 }: {
-  tab: GeneralReportTabKey;
   page: number;
   pageSize: number;
-  region: string;
-  search: string;
-}): GeneralReportPayload => {
+  region?: string;
+  search?: string;
+}): GeneralReportPayload {
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safePageSize = Math.max(Number(pageSize) || 10, 1);
+
   return {
-    page,
-    pageSize,
-    skip: (page - 1) * pageSize,
-    take: pageSize,
+    page: safePage,
+    pageSize: safePageSize,
+    skip: (safePage - 1) * safePageSize,
+    take: safePageSize,
     sort: [],
     group: [],
-    filter: createFilter(tab, region, search),
+    filter: createFilter({
+      region,
+      search,
+    }),
   };
-};
+}
 
 export const generalReportsService = {
   async getRows({
     tab,
     page,
     pageSize,
-    region = "",
-    search = "",
+    region,
+    search,
   }: {
     tab: GeneralReportTabKey;
     page: number;
@@ -117,14 +178,19 @@ export const generalReportsService = {
     rows: GeneralReportRow[];
     total: number;
   }> {
-    const response = await apiPost<ApiListResponse<GeneralReportRow>, GeneralReportPayload>(
-      GENERAL_REPORT_ENDPOINTS[tab],
-      createPayload({ tab, page, pageSize, region, search }),
+    const response = await apiPost<ApiListResponse<GeneralReportRow>>(
+      getEndpoint(tab),
+      createPayload({
+        page,
+        pageSize,
+        region,
+        search,
+      }),
       jsonPatchConfig()
     );
 
-    const rows = getArrayData(response);
-    const total = getTotal(response) || rows.length;
+    const rows = getArrayData(response.data);
+    const total = getTotal(response.data);
 
     return {
       rows,

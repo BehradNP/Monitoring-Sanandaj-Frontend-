@@ -1,238 +1,397 @@
-import { apiGet, apiPost, jsonPatchConfig } from "@/lib/api/client";
+import { apiClient, apiPost, jsonPatchConfig } from "@/lib/api/client";
 import { API_ENDPOINTS } from "@/lib/api/endpoints";
 import type {
-  ApiListResponse,
-  ApiResponse,
-  KendoListPayload,
-  QrCategoryApiItem,
-  QrCategoryNode,
-  QrReportApiRow,
   QrReportRow,
   QrReportSearchParams,
-  QrZoneOption,
 } from "@/types/qr-report";
 
-const toString = (value: unknown, fallback = "") => {
+export type { QrReportRow, QrReportSearchParams } from "@/types/qr-report";
+
+type ApiListResponse<T> = {
+  Data?: T[];
+  data?: T[];
+  Total?: number;
+  total?: number;
+  Group?: unknown;
+  group?: unknown;
+  Aggregates?: unknown;
+  aggregates?: unknown;
+  Errors?: unknown;
+  errors?: unknown;
+};
+
+type ApiResponse<T> = {
+  data?: T;
+  Data?: T;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  statusCode?: number;
+  statuscode?: number;
+  message?: string | null;
+  Message?: string | null;
+};
+
+type KendoListPayload = {
+  page: number;
+  pageSize: number;
+  skip: number;
+  take: number;
+  sort: unknown[];
+  group: unknown[];
+  filter: unknown | null;
+};
+
+export type QrZoneOption = {
+  id: number;
+  guid: string;
+  title: string;
+  label: string;
+  value: number;
+};
+
+export type QrCategoryOption = {
+  id: number;
+  guid: string;
+  title: string;
+  label: string;
+  value: number;
+  parentId: number | null;
+  code: string;
+  children: QrCategoryOption[];
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function cleanString(value: unknown, fallback = "") {
   if (value === null || value === undefined) return fallback;
-  return String(value).trim();
-};
 
-const toNumber = (value: unknown, fallback = 0) => {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : fallback;
-};
+  const text = String(value).trim();
 
-const getArrayData = <T>(response: ApiListResponse<T> | ApiResponse<T[]>) => {
-  return response.Data ?? response.data ?? [];
-};
+  return text || fallback;
+}
 
-const getTotal = <T>(response: ApiListResponse<T>) => {
-  return Number(response.Total ?? response.total ?? 0);
-};
+function getString(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = item[key];
 
-const createListPayload = (page = 1, pageSize = 1000): KendoListPayload => {
+    if (typeof value === "string" && value.trim()) return value.trim();
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
+  return fallback;
+}
+
+function getNumber(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = 0
+) {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+
+    if (typeof value === "string") {
+      const numberValue = Number(value.trim());
+
+      if (Number.isFinite(numberValue)) return numberValue;
+    }
+  }
+
+  return fallback;
+}
+
+function getNullableNumber(
+  item: Record<string, unknown>,
+  keys: string[]
+): number | null {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (value === null || value === undefined || value === "") continue;
+
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+
+    if (typeof value === "string") {
+      const numberValue = Number(value.trim());
+
+      if (Number.isFinite(numberValue)) return numberValue;
+    }
+  }
+
+  return null;
+}
+
+function getArrayData<T>(response: ApiListResponse<T>): T[] {
+  const rows = response.Data ?? response.data ?? [];
+
+  return Array.isArray(rows) ? rows : [];
+}
+
+function getResponseInnerData<T>(response: ApiResponse<T> | T): T {
+  const record = asRecord(response);
+  const data = record.data ?? record.Data;
+
+  if (data !== undefined && data !== null) {
+    return data as T;
+  }
+
+  return response as T;
+}
+
+function createListPayload(page = 1, pageSize = 3000): KendoListPayload {
+  const safePage = Math.max(Number(page) || 1, 1);
+  const safePageSize = Math.max(Number(pageSize) || 3000, 1);
+
   return {
-    page,
-    pageSize,
-    skip: (page - 1) * pageSize,
-    take: pageSize,
+    page: safePage,
+    pageSize: safePageSize,
+    skip: (safePage - 1) * safePageSize,
+    take: safePageSize,
     sort: [],
     group: [],
     filter: null,
   };
-};
+}
 
-const normalizeZone = (item: Record<string, unknown>): QrZoneOption => {
+function normalizeZoneOption(item: unknown): QrZoneOption {
+  const record = asRecord(item);
+
+  const id = getNumber(record, ["Id", "id", "Value", "value"]);
+  const title = getString(
+    record,
+    ["Title", "title", "Name", "name", "Label", "label"],
+    "بدون عنوان"
+  );
+
   return {
-    id: toNumber(item.Id ?? item.id),
-    title:
-      toString(item.Title ?? item.title) ||
-      toString(item.Name ?? item.name) ||
-      toString(item.ZoneNetworkTitle ?? item.zoneNetworkTitle) ||
-      "-",
+    id,
+    guid: getString(record, ["Guid", "guid"]),
+    title,
+    label: title,
+    value: id,
   };
-};
+}
 
-const normalizeCategory = (item: QrCategoryApiItem): QrCategoryNode => {
+function normalizeCategoryOption(item: unknown): QrCategoryOption {
+  const record = asRecord(item);
+
+  const id = getNumber(record, ["Id", "id", "Value", "value"]);
+  const title = getString(
+    record,
+    ["Title", "title", "Name", "name", "Label", "label"],
+    "بدون عنوان"
+  );
+
   return {
-    id: toNumber(item.Id ?? item.id),
-    title: toString(item.Title ?? item.title) || "-",
-    code: toString(item.Tag ?? item.tag),
-    parentId: item.ParentId ?? item.parentId ?? null,
-    guid: toString(item.Guid ?? item.guid),
+    id,
+    guid: getString(record, ["Guid", "guid"]),
+    title,
+    label: title,
+    value: id,
+    parentId: getNullableNumber(record, ["ParentId", "parentId"]),
+    code: getString(record, ["Tag", "tag", "Code", "code"]),
     children: [],
   };
-};
+}
 
-const buildCategoryTree = (items: QrCategoryNode[]) => {
-  const map = new Map<number, QrCategoryNode>();
-  const roots: QrCategoryNode[] = [];
+function buildCategoryTree(items: QrCategoryOption[]) {
+  const map = new Map<number, QrCategoryOption>();
+  const roots: QrCategoryOption[] = [];
 
   items.forEach((item) => {
-    map.set(item.id, { ...item, children: [] });
+    map.set(item.id, {
+      ...item,
+      children: [],
+    });
   });
 
   map.forEach((item) => {
     if (item.parentId && map.has(item.parentId)) {
-      const parent = map.get(item.parentId);
-
-      if (parent) {
-        parent.children = parent.children || [];
-        parent.children.push(item);
-      }
+      map.get(item.parentId)?.children.push(item);
     } else {
       roots.push(item);
     }
   });
 
-  const sortTree = (nodes: QrCategoryNode[]) => {
-    nodes.sort((a, b) => a.id - b.id);
-
-    nodes.forEach((node) => {
-      if (node.children?.length) {
-        sortTree(node.children);
-      }
-    });
-  };
-
-  sortTree(roots);
-
   return roots;
-};
+}
 
-const normalizeRow = (item: QrReportApiRow): QrReportRow => {
-  const apiName =
-    toString(item.name) ||
-    toString(item.Name) ||
-    toString(item.Title ?? item.title) ||
-    "-";
+function normalizeSearchValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return undefined;
 
-  const firstName = toString(
-    item.FristName ?? item.fristName ?? item.FirstName ?? item.firstName
+  const numberValue = Number(value);
+
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function createDownloadParams(params: QrReportSearchParams) {
+  const record = asRecord(params);
+
+  const zoneId = normalizeSearchValue(
+    record.zoneId as number | string | null | undefined
   );
 
-  const lastName = toString(item.LastName ?? item.lastName);
+  const regionId = normalizeSearchValue(
+    record.regionId as number | string | null | undefined
+  );
 
-  const fullName =
-    toString(item.FullName ?? item.fullName) ||
-    `${firstName} ${lastName}`.trim() ||
-    "-";
+  const tableId = normalizeSearchValue(
+    record.tableId as number | string | null | undefined
+  );
 
-  const code = toString(item.Code ?? item.code);
-
-  const nationalId =
-    toString(item.NationalId ?? item.nationalId) ||
-    code ||
-    "-";
-
-  const number =
-    toString(item.Number ?? item.number) ||
-    code ||
-    toString(item.Id ?? item.id) ||
-    "-";
-
-  const mac =
-    toString(item.MacAdderss ?? item.macAdderss) ||
-    toString(item.MAC ?? item.mac) ||
-    "-";
+  const categoryId = normalizeSearchValue(
+    record.categoryId as number | string | null | undefined
+  );
 
   return {
-    id: toNumber(item.Id ?? item.id, Number(number) || Date.now()),
-    guid: toString(item.Guid ?? item.guid),
-    ip: toString(item.IP ?? item.ip) || "-",
-    mac,
+    ZoneId: zoneId ?? regionId,
+    TableId: tableId,
+    categoryid: categoryId,
+    startIp: cleanString(record.startIp),
+    endIp: cleanString(record.endIp),
+  };
+}
+
+function normalizeQrReportRow(item: unknown, index: number): QrReportRow {
+  const record = asRecord(item);
+
+  const name = getString(record, ["name", "Name", "fullName", "FullName"]);
+  const number = getString(record, ["number", "Number", "qrCode", "QrCode"]).replace(
+    /^QR[-_\s]*/i,
+    ""
+  );
+  const mac = getString(record, [
+    "mac",
+    "Mac",
+    "MAC",
+    "MacAdderss",
+    "macAdderss",
+    "macAddress",
+    "MacAddress",
+  ]);
+
+  const ip = getString(record, ["ip", "IP"], "-");
+  const fullName = getString(
+    record,
+    ["fullName", "FullName", "name", "Name"],
+    name || "-"
+  );
+  const nationalId = getString(
+    record,
+    ["nationalId", "NationalId", "code", "Code", "number", "Number"],
+    number || "-"
+  );
+
+  const normalized = {
+    id: getNumber(record, ["id", "Id"], index + 1),
+    ip,
     fullName,
     nationalId,
-    userName:
-      toString(item.UserName ?? item.userName ?? item.Username ?? item.username) ||
-      "-",
-    faTitle: apiName,
-    computerName:
-      toString(item.ComputerName ?? item.computerName ?? item.Tag ?? item.tag) ||
-      "-",
-    number,
+    name: name || fullName,
+    number: number || nationalId,
+    mac,
+    macAddress: mac,
+    qrCode: number || nationalId,
+    title: getString(record, ["title", "Title"], name || fullName),
+    categoryTitle: getString(
+      record,
+      ["categoryTitle", "CategoryTitle", "tagFull", "TagFull"],
+      "-"
+    ),
+    organizationTitle: getString(
+      record,
+      ["organizationTitle", "OrganizationTitle", "zoneTitle", "ZoneTitle"],
+      "-"
+    ),
+    username: getString(record, ["username", "Username", "userName", "UserName"], "-"),
+    userName: getString(record, ["userName", "UserName", "username", "Username"], "-"),
   };
-};
 
-const createDownloadParams = (params: QrReportSearchParams) => {
-  const queryParams: Record<string, unknown> = {};
-
-  if (params.zoneId) {
-    queryParams.ZoneId = params.zoneId;
-  }
-
-  if (params.tableId?.trim()) {
-    queryParams.TableId = params.tableId.trim();
-  }
-
-  if (params.categoryId) {
-    queryParams.categoryid = params.categoryId;
-  }
-
-  if (params.startIp?.trim()) {
-    queryParams.startIp = params.startIp.trim();
-  }
-
-  if (params.endIp?.trim()) {
-    queryParams.endIp = params.endIp.trim();
-  }
-
-  return queryParams;
-};
+  return normalized as unknown as QrReportRow;
+}
 
 export const qrReportService = {
   async getZones(): Promise<QrZoneOption[]> {
-    const response = await apiPost<
-      ApiListResponse<Record<string, unknown>>,
-      KendoListPayload
-    >(
+    const response = await apiPost<ApiListResponse<Record<string, unknown>>>(
       API_ENDPOINTS.zoneNetwork.list,
-      createListPayload(1, 1000),
+      createListPayload(),
       jsonPatchConfig()
     );
 
-    return getArrayData(response)
-      .map(normalizeZone)
-      .filter((item) => item.id && item.title !== "-");
+    return getArrayData(response.data)
+      .map(normalizeZoneOption)
+      .filter((item) => item.id > 0);
   },
 
-  async getCategories(): Promise<QrCategoryNode[]> {
-    const response = await apiPost<
-      ApiListResponse<QrCategoryApiItem>,
-      KendoListPayload
-    >(
+  async getRegions(): Promise<QrZoneOption[]> {
+    return this.getZones();
+  },
+
+  async getCategories(): Promise<QrCategoryOption[]> {
+    const response = await apiPost<ApiListResponse<Record<string, unknown>>>(
       API_ENDPOINTS.category.list,
-      createListPayload(1, 1000),
+      createListPayload(),
       jsonPatchConfig()
     );
 
-    const flatItems = getArrayData(response)
-      .map(normalizeCategory)
-      .filter((item) => item.id);
-
-    return buildCategoryTree(flatItems);
+    return getArrayData(response.data)
+      .map(normalizeCategoryOption)
+      .filter((item) => item.id > 0);
   },
 
-  async search(
-    params: QrReportSearchParams
-  ): Promise<{ rows: QrReportRow[]; total: number }> {
-    const response = await apiGet<
-      ApiListResponse<QrReportApiRow> | ApiResponse<QrReportApiRow[]>
-    >(API_ENDPOINTS.category.downloadAll, {
-      params: createDownloadParams(params),
-    });
+  async getHierarchy(): Promise<QrCategoryOption[]> {
+    const categories = await this.getCategories();
 
-    const rows = getArrayData(response).map(normalizeRow);
+    return buildCategoryTree(categories);
+  },
 
-    const total =
-      "Total" in response || "total" in response
-        ? getTotal(response as ApiListResponse<QrReportApiRow>)
-        : rows.length;
+  async getCategoryTree(): Promise<QrCategoryOption[]> {
+    return this.getHierarchy();
+  },
+
+  async getQrRows(params: QrReportSearchParams): Promise<QrReportRow[]> {
+    const response = await apiClient.get<ApiResponse<unknown[]> | unknown[]>(
+      API_ENDPOINTS.category.downloadAll,
+      jsonPatchConfig(createDownloadParams(params))
+    );
+
+    const data = getResponseInnerData<unknown[]>(response.data);
+
+    return Array.isArray(data)
+      ? data.map((item, index) => normalizeQrReportRow(item, index))
+      : [];
+  },
+
+  async search(params: QrReportSearchParams): Promise<{
+    rows: QrReportRow[];
+    total: number;
+  }> {
+    const rows = await this.getQrRows(params);
 
     return {
       rows,
-      total: total || rows.length,
+      total: rows.length,
     };
+  },
+
+  async getRows(params: QrReportSearchParams): Promise<QrReportRow[]> {
+    return this.getQrRows(params);
+  },
+
+  async downloadAll(params: QrReportSearchParams): Promise<QrReportRow[]> {
+    return this.getQrRows(params);
   },
 };
 

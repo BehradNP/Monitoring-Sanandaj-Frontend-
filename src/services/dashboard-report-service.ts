@@ -1,195 +1,294 @@
-import { apiGet } from "@/lib/api/client";
-import type {
-  ApiResponse,
-  DashboardRadioItem,
-  DashboardReportData,
-  DashboardReportHardItem,
-  DashboardReportOsItem,
-  DashboardReportZoneItem,
-} from "@/types/dashboard-report";
+import { apiClient } from "@/lib/api/client";
+import type { DashboardReportData } from "@/types/dashboard-report";
+
+type ApiResponse<T> = {
+  data?: T;
+  Data?: T;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  statusCode?: number;
+  statuscode?: number;
+  message?: string | null;
+  Message?: string | null;
+};
 
 const DASHBOARD_REPORT_ENDPOINT = "/Report/Get";
 
-const getResponseData = <T>(response: ApiResponse<T>): T | null => {
-  return response.data ?? response.Data ?? null;
-};
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
-const toNumber = (value: unknown, fallback = 0) => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+function getNumber(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = 0
+) {
+  for (const key of keys) {
+    const value = item[key];
 
-  if (typeof value === "string") {
-    const normalized = value.replace(/,/g, "").trim();
-    const numberValue = Number(normalized);
-    return Number.isFinite(numberValue) ? numberValue : fallback;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const numberValue = Number(value.trim());
+
+      if (Number.isFinite(numberValue)) {
+        return numberValue;
+      }
+    }
   }
 
   return fallback;
-};
+}
 
-const toString = (value: unknown, fallback = "") => {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+function getString(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+
   return fallback;
-};
+}
 
-const toBoolean = (value: unknown, fallback = false) => {
-  return typeof value === "boolean" ? value : fallback;
-};
+function getBoolean(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = false
+) {
+  for (const key of keys) {
+    const value = item[key];
 
-const asRecord = (value: unknown): Record<string, unknown> => {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-};
+    if (typeof value === "boolean") return value;
 
-const normalizeNumberArray = (value: unknown): number[] => {
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+
+    if (typeof value === "number") {
+      return value === 1;
+    }
+  }
+
+  return fallback;
+}
+
+function getArray<T = unknown>(
+  item: Record<string, unknown>,
+  keys: string[]
+): T[] {
+  for (const key of keys) {
+    const value = item[key];
+
+    if (Array.isArray(value)) {
+      return value as T[];
+    }
+  }
+
+  return [];
+}
+
+function getResponseData<T>(responseData: unknown): T | null {
+  const payload = asRecord(responseData);
+  const firstLevelData = payload.data ?? payload.Data;
+
+  if (!firstLevelData) {
+    return null;
+  }
+
+  const firstLevelRecord = asRecord(firstLevelData);
+  const nestedData = firstLevelRecord.data ?? firstLevelRecord.Data;
+
+  if (nestedData) {
+    return nestedData as T;
+  }
+
+  return firstLevelData as T;
+}
+
+function normalizeNumberArray(value: unknown): number[] {
   if (!Array.isArray(value)) return [];
-  return value.map((item) => toNumber(item));
-};
 
-const getValueFromAnyShape = (value: unknown): number => {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  return value.map((item) => {
+    if (typeof item === "number" && Number.isFinite(item)) return item;
 
-  if (typeof value === "string") return toNumber(value);
+    if (typeof item === "string") {
+      const numberValue = Number(item.trim());
+      return Number.isFinite(numberValue) ? numberValue : 0;
+    }
 
-  if (Array.isArray(value)) {
-    return value.reduce((sum, item) => sum + getValueFromAnyShape(item), 0);
-  }
-
-  if (value && typeof value === "object") {
-    const row = asRecord(value);
-
-    const directValue =
-      row.count ??
-      row.Count ??
-      row.value ??
-      row.Value ??
-      row.total ??
-      row.Total ??
-      row.number ??
-      row.Number ??
-      row.y ??
-      row.Y;
-
-    const directNumber = getValueFromAnyShape(directValue);
-
-    if (directNumber > 0) return directNumber;
-
-    return getValueFromAnyShape(row.data ?? row.Data ?? row.datasets ?? row.Datasets ?? row.values ?? row.Values);
-  }
-
-  return 0;
-};
-
-const normalizeRadioList = (items: unknown): DashboardRadioItem[] => {
-  if (!Array.isArray(items)) return [];
-
-  return items.map((item) => {
-    const row = asRecord(item);
-
-    return {
-      source: toString(row.source ?? row.Source),
-      info: toString(row.info ?? row.Info),
-      dst: toString(row.dst ?? row.Dst),
-    };
+    return 0;
   });
-};
+}
 
-const normalizeReportZone = (items: unknown): DashboardReportZoneItem[] => {
-  if (!Array.isArray(items)) return [];
+function normalizeRadioItem(item: unknown) {
+  const record = asRecord(item);
 
-  return items.map((item) => {
-    const row = asRecord(item);
-
-    return {
-      tagid: (row.tagid ?? row.TagId ?? row.tagId ?? null) as number | string | null,
-      borderRadius: toNumber(row.borderRadius ?? row.BorderRadius),
-      borderWidth: toNumber(row.borderWidth ?? row.BorderWidth),
-      data: normalizeNumberArray(row.data ?? row.Data),
-      label: toString(row.label ?? row.Label),
-      borderColor: toString(row.borderColor ?? row.BorderColor),
-      backgroundColor: toString(row.backgroundColor ?? row.BackgroundColor),
-      borderSkipped: toBoolean(row.borderSkipped ?? row.BorderSkipped),
-    };
-  });
-};
-
-const normalizeReportOs = (items: unknown): DashboardReportOsItem[] => {
-  if (!Array.isArray(items)) return [];
-
-  return items.map((item) => {
-    const row = asRecord(item);
-
-    const label = toString(row.lable ?? row.label ?? row.Label ?? row.title ?? row.Title ?? row.name ?? row.Name, "نامشخص");
-    const count = getValueFromAnyShape(row.count ?? row.Count ?? row.value ?? row.Value ?? row.data ?? row.Data ?? row.datasets ?? row.Datasets);
-
-    return {
-      lable: label,
-      label,
-      color: toString(row.color ?? row.Color),
-      count,
-      value: count,
-      data: row.data ?? row.Data,
-      datasets: row.datasets ?? row.Datasets,
-      raw: item,
-    };
-  });
-};
-
-const normalizeReportHard = (items: unknown): DashboardReportHardItem[] => {
-  if (!Array.isArray(items)) return [];
-
-  return items.map((item) => {
-    const row = asRecord(item);
-
-    const label = toString(row.lable ?? row.label ?? row.Label ?? row.title ?? row.Title ?? row.name ?? row.Name, "نامشخص");
-
-    const value = getValueFromAnyShape(
-      row.count ??
-        row.Count ??
-        row.value ??
-        row.Value ??
-        row.total ??
-        row.Total ??
-        row.number ??
-        row.Number ??
-        row.data ??
-        row.Data ??
-        row.datasets ??
-        row.Datasets
-    );
-
-    return {
-      lable: label,
-      label,
-      color: toString(row.color ?? row.Color),
-      count: value,
-      value,
-      total: value,
-      data: row.data ?? row.Data,
-      datasets: row.datasets ?? row.Datasets,
-      raw: item,
-    };
-  });
-};
-
-const normalizeDashboardReport = (data: Partial<DashboardReportData> | null): DashboardReportData => {
   return {
-    redio: toNumber(data?.redio),
-    online: toNumber(data?.online),
-    detials: toNumber(data?.detials),
-    all: toNumber(data?.all),
-    redioList: normalizeRadioList(data?.redioList),
-    reportZone: normalizeReportZone(data?.reportZone),
-    reportOs: normalizeReportOs(data?.reportOs),
-    reportHard: normalizeReportHard(data?.reportHard),
+    source: getString(record, ["source", "Source"]),
+    dst: getString(record, ["dst", "Dst", "destination", "Destination"]),
+    info: getString(record, ["info", "Info"]),
   };
-};
+}
+
+function normalizeZoneItem(item: unknown) {
+  const record = asRecord(item);
+
+  const rawData =
+    record.data ??
+    record.Data ??
+    record.values ??
+    record.Values ??
+    record.datasets ??
+    record.Datasets;
+
+  return {
+    label: getString(
+      record,
+      ["label", "Label", "lable", "Lable", "title", "Title", "name", "Name"],
+      ""
+    ),
+    data: normalizeNumberArray(rawData),
+    borderRadius: getNumber(record, ["borderRadius", "BorderRadius"], 8),
+    borderWidth: getNumber(record, ["borderWidth", "BorderWidth"], 1),
+    borderColor: getString(record, ["borderColor", "BorderColor"], "#ffffff"),
+    backgroundColor: getString(
+      record,
+      ["backgroundColor", "BackgroundColor"],
+      "#2f7f86"
+    ),
+    borderSkipped: getBoolean(
+      record,
+      ["borderSkipped", "BorderSkipped"],
+      false
+    ),
+  };
+}
+
+function normalizeSimpleReportItem(item: unknown) {
+  const record = asRecord(item);
+
+  return {
+    ...record,
+    label: getString(
+      record,
+      ["label", "Label", "lable", "Lable", "title", "Title", "name", "Name"],
+      ""
+    ),
+    title: getString(
+      record,
+      ["title", "Title", "name", "Name", "label", "Label", "lable", "Lable"],
+      ""
+    ),
+    name: getString(
+      record,
+      ["name", "Name", "title", "Title", "label", "Label", "lable", "Lable"],
+      ""
+    ),
+    count: getNumber(
+      record,
+      [
+        "count",
+        "Count",
+        "value",
+        "Value",
+        "total",
+        "Total",
+        "number",
+        "Number",
+        "y",
+        "Y",
+      ],
+      0
+    ),
+    value: getNumber(
+      record,
+      [
+        "value",
+        "Value",
+        "count",
+        "Count",
+        "total",
+        "Total",
+        "number",
+        "Number",
+        "y",
+        "Y",
+      ],
+      0
+    ),
+  };
+}
+
+function normalizeDashboardReport(data: unknown): DashboardReportData {
+  const item = asRecord(data);
+
+  const redioList = getArray(
+    item,
+    ["redioList", "RedioList", "radioList", "RadioList"]
+  ).map(normalizeRadioItem);
+
+  const reportZone = getArray(item, ["reportZone", "ReportZone"]).map(
+    normalizeZoneItem
+  );
+
+  const reportOs = getArray(
+    item,
+    ["reportOs", "ReportOs", "reportOS", "ReportOS"]
+  ).map(normalizeSimpleReportItem);
+
+  const reportHard = getArray(
+    item,
+    ["reportHard", "ReportHard", "reportHardware", "ReportHardware"]
+  ).map(normalizeSimpleReportItem);
+
+  const normalized = {
+    redio: getNumber(item, ["redio", "Redio", "radio", "Radio"]),
+    online: getNumber(item, ["online", "Online"]),
+    detials: getNumber(
+      item,
+      ["detials", "Detials", "details", "Details"],
+      0
+    ),
+    all: getNumber(item, ["all", "All", "total", "Total"]),
+    redioList,
+    reportZone,
+    reportOs,
+    reportHard,
+  };
+
+  return normalized as unknown as DashboardReportData;
+}
 
 export const dashboardReportService = {
   async getReport(): Promise<DashboardReportData> {
-    const response = await apiGet<ApiResponse<DashboardReportData>>(DASHBOARD_REPORT_ENDPOINT);
-    const data = getResponseData(response);
+    const response = await apiClient.get<ApiResponse<DashboardReportData>>(
+      DASHBOARD_REPORT_ENDPOINT
+    );
+
+    const data = getResponseData<DashboardReportData>(response.data);
 
     return normalizeDashboardReport(data);
+  },
+
+  async getDashboardReport(): Promise<DashboardReportData> {
+    return this.getReport();
   },
 };
 

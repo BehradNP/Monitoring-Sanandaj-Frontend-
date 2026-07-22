@@ -1,18 +1,13 @@
 import type { NextConfig } from "next";
 
-const INTERNAL_API_URL =
-  process.env.INTERNAL_API_URL || "https://msfmapi.sanandaj.ir/api/v1";
+const API_ORIGIN = process.env.INTERNAL_API_ORIGIN || "https://msfmapi.sanandaj.ir";
 
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/api-proxy/v1/:path*",
-        destination: `${INTERNAL_API_URL}/:path*`,
-      },
-      {
         source: "/api-proxy/:path*",
-        destination: `${INTERNAL_API_URL}/:path*`,
+        destination: `${API_ORIGIN}/api/:path*`,
       },
     ];
   },

@@ -1,111 +1,229 @@
 import axios from "axios";
-import type { ApiResponse, AuthUserProfile, LoginPayload, LoginResult } from "../types/auth";
+import { apiClient } from "@/lib/api/client";
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://msfmapi.sanandaj.ir/api/v1").trim().replace(/\/+$/, "");
+export type LoginPayload = {
+  username: string;
+  password: string;
+};
 
-function baseUrlHasVersion(baseURL?: string) {
-  if (!baseURL) return false;
-  return /\/v\d+$/i.test(baseURL.trim().replace(/\/+$/, ""));
+export type AuthUserProfile = {
+  id?: number;
+  guid?: string;
+  userName?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  role?: string;
+  roles?: string[];
+  [key: string]: unknown;
+};
+
+export type LoginResult = {
+  role?: string;
+  access_token: string;
+  accessToken: string;
+  token: string;
+  refresh_token?: string;
+  refreshToken?: string;
+  token_type?: string;
+  tokenType?: string;
+  expires_in?: string | number;
+  expiresIn?: string | number;
+  expires?: string | number | null;
+  guid?: string;
+  user?: AuthUserProfile | null;
+  raw?: unknown;
+};
+
+type LoginApiResponse = {
+  data?: unknown;
+  Data?: unknown;
+  isSuccess?: boolean;
+  issuccess?: boolean;
+  statusCode?: number;
+  statuscode?: number;
+  message?: string | null;
+  Message?: string | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-function normalizeRequestUrl(url?: string, baseURL?: string) {
-  if (!url) return url;
-  if (/^https?:\/\//i.test(url)) return url;
-  if (!baseURL || !baseUrlHasVersion(baseURL)) return url;
-  return url.replace(/^\/?v\d+(?=\/)/i, "");
-}
+function getString(
+  item: Record<string, unknown>,
+  keys: string[],
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = item[key];
 
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: Number(process.env.NEXT_PUBLIC_API_TIMEOUT || 90000),
-  headers: {
-    Accept: "application/json, text/plain, */*",
-  },
-});
-
-apiClient.interceptors.request.use((config) => {
-  config.url = normalizeRequestUrl(config.url, config.baseURL || API_BASE_URL);
-
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("token");
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-  }
-
-  return config;
-});
-
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    const status = error?.response?.status;
-
-    if (typeof window !== "undefined" && status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("userProfile");
-
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.replace("/login");
-      }
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
     }
 
-    return Promise.reject(error);
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
   }
-);
 
-function extractData<T>(response: ApiResponse<T> | unknown): T | null {
-  const raw = response as ApiResponse<T>;
-  return raw?.data ?? raw?.Data ?? null;
+  return fallback;
 }
 
-function isApiSuccess(data: ApiResponse | unknown) {
-  const raw = data as ApiResponse;
-  return !(raw?.issuccess === false || raw?.isSuccess === false || raw?.statuscode === 2 || raw?.statusCode === 2);
+function getInnerData(responseData: unknown) {
+  const root = asRecord(responseData);
+
+  const firstLevelData = root.data ?? root.Data;
+
+  if (firstLevelData !== undefined && firstLevelData !== null) {
+    const firstLevelRecord = asRecord(firstLevelData);
+    const nestedData = firstLevelRecord.data ?? firstLevelRecord.Data;
+
+    if (nestedData !== undefined && nestedData !== null) {
+      return nestedData;
+    }
+
+    return firstLevelData;
+  }
+
+  return responseData;
 }
 
-function getApiMessage(data: ApiResponse | unknown) {
-  const raw = data as ApiResponse;
-  return raw?.message || raw?.Message || "عملیات با خطا مواجه شد.";
+function normalizeLoginResult(responseData: unknown): LoginResult {
+  const data = getInnerData(responseData);
+  const record = asRecord(data);
+
+  const accessToken = getString(record, [
+    "access_token",
+    "accessToken",
+    "token",
+    "Token",
+    "AccessToken",
+  ]);
+
+  const refreshToken = getString(record, [
+    "refresh_token",
+    "refreshToken",
+    "RefreshToken",
+  ]);
+
+  const role = getString(record, ["role", "Role"]);
+  const guid = getString(record, ["guid", "Guid"]);
+
+  return {
+    role,
+    access_token: accessToken,
+    accessToken,
+    token: accessToken,
+    refresh_token: refreshToken,
+    refreshToken,
+    token_type: getString(record, ["token_type", "tokenType", "TokenType"]),
+    tokenType: getString(record, ["token_type", "tokenType", "TokenType"]),
+    expires_in: record.expires_in as string | number | undefined,
+    expiresIn: record.expiresIn as string | number | undefined,
+    expires: (record.expires ?? null) as string | number | null,
+    guid,
+    user: {
+      guid,
+      role,
+      userName: getString(record, ["userName", "UserName", "username"]),
+      username: getString(record, ["username", "UserName", "userName"]),
+      fullName: getString(record, ["fullName", "FullName"]),
+    },
+    raw: responseData,
+  };
+}
+
+function getErrorMessage(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const responseData = error.response?.data;
+    const root = asRecord(responseData);
+
+    return (
+      getString(root, ["message", "Message", "error", "Error"]) ||
+      error.message ||
+      "خطا در ورود به سامانه"
+    );
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "خطا در ورود به سامانه";
 }
 
 export const authService = {
   async login(payload: LoginPayload): Promise<LoginResult> {
-    const response = await axios.post("/api/auth/login", {
-      username: payload.username,
-      password: payload.password,
-    });
+    try {
+      const response = await axios.post<LoginApiResponse>(
+        "/api/auth/login",
+        {
+          username: payload.username.trim(),
+          password: payload.password.trim(),
+        },
+        {
+          headers: {
+            Accept: "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+          },
+          timeout: 90000,
+        }
+      );
 
-    const result = response.data as ApiResponse & { token?: string };
+      const result = normalizeLoginResult(response.data);
 
-    if (!isApiSuccess(result)) {
-      throw new Error(getApiMessage(result));
+      if (!result.access_token) {
+        console.log("LOGIN RESPONSE WITHOUT TOKEN:", response.data);
+
+        throw new Error("توکن ورود از سمت سرور دریافت نشد.");
+      }
+
+      return result;
+    } catch (error) {
+      console.log("LOGIN SERVICE ERROR:", error);
+
+      throw new Error(getErrorMessage(error));
     }
-
-    if (!result.token) {
-      throw new Error("توکن ورود از سمت سرور دریافت نشد.");
-    }
-
-    return {
-      token: result.token,
-      raw: result,
-    };
   },
 
   async getProfile(): Promise<AuthUserProfile | null> {
-    const response = await apiClient.get<ApiResponse<AuthUserProfile>>("/v1/User/UserProfile");
-    const result = response.data;
+    try {
+      const response = await apiClient.get("/User/GetProfile");
+      const data = getInnerData(response.data);
+      const record = asRecord(data);
 
-    if (!isApiSuccess(result)) {
-      throw new Error(getApiMessage(result));
+      return {
+        id: Number(record.id ?? record.Id) || undefined,
+        guid: getString(record, ["guid", "Guid"]),
+        userName: getString(record, ["userName", "UserName", "username"]),
+        username: getString(record, ["username", "UserName", "userName"]),
+        firstName: getString(record, ["firstName", "FirstName", "fristName"]),
+        lastName: getString(record, ["lastName", "LastName"]),
+        fullName: getString(record, ["fullName", "FullName"]),
+        role: getString(record, ["role", "Role"]),
+        ...record,
+      };
+    } catch (error) {
+      console.log("GET PROFILE ERROR:", error);
+      return null;
     }
-
-    return extractData<AuthUserProfile>(result);
   },
 
   logout() {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("token");
-      localStorage.removeItem("userProfile");
-      window.location.replace("/login");
-    }
+    if (typeof window === "undefined") return;
+
+    localStorage.removeItem("token");
+    localStorage.removeItem("userProfile");
+    window.location.href = "/Login";
   },
 };
+
+export const login = authService.login;
+export const getProfile = authService.getProfile;
+export const logout = authService.logout;
+
+export default authService;
